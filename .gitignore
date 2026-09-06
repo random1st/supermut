@@ -75,3 +75,4 @@ docs/_build/
 .s5d/evidence/
 .s5d/runs/
 .claude/settings.local.json
+data/

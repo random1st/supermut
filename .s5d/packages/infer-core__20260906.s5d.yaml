@@ -24,8 +24,17 @@ workflow:
     subject: governed_components
     required_gates: [typecheck]
   target_architecture:
-    summary: Describe the steady-state design this change should reach
-    invariants: []
+    summary: >-
+      Language-agnostic mutation-testing engine: Rust inference core
+      (tokens in/out, no language knowledge) + per-language frontends
+      behind a Language protocol (find_targets / validate / test-runner /
+      selection). Python frontend first (ast + pytest + coverage.py);
+      JS/TS frontend later (tree-sitter + vitest/jest + istanbul).
+      One fine-tuned mutant model, retrainable multilingually.
+    invariants:
+    - Inference core never parses source code; only the Language layer does
+    - Training prompt format == serving prompt format, per language
+    - Kill-rate accounting (NO_TESTS distinct from SURVIVED) is language-neutral
   delivery_strategy:
     summary: Describe how this change moves current code toward the target architecture
     rationale: null
@@ -136,7 +145,9 @@ artifacts:
     - python/supermut/selection.py
     - python/supermut/cache.py
     - python/supermut/dataset.py
+    - python/supermut/synthetic.py
     - python/tests/test_dataset.py
+    - python/tests/test_synthetic.py
     - python/tests/test_selection.py
     - python/supermut/__main__.py
     - python/tests/test_all.py
