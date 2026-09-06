@@ -23,6 +23,7 @@ jobs:
   test:
     runs-on: ${{ matrix.runner }}
     strategy:
+      fail-fast: false
       matrix:
         runner: [ubuntu-22.04, macos-latest]
     steps:
@@ -35,20 +36,18 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y cmake clang
       - name: Build and test
+        # pip drives maturin as the build backend — no virtualenv needed,
+        # unlike `maturin develop` which refuses to run without one.
         run: |
-          pip install maturin huggingface_hub pytest
-          maturin develop --release
+          pip install -v . pytest
           pytest python/tests -q
 
   linux:
-    runs-on: ${{ matrix.platform.runner }}
-    strategy:
-      matrix:
-        platform:
-          - runner: ubuntu-22.04
-            target: x86_64
-          - runner: ubuntu-22.04
-            target: aarch64
+    # x86_64 only for now: cross-building the llama.cpp C++ core for aarch64
+    # under QEMU takes ~an hour; add a native arm runner when needed.
+    # manylinux_2_28 (AlmaLinux 8): the manylinux2014 libclang is too old for
+    # bindgen (missing clang_getTranslationUnitTargetInfo).
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
@@ -57,20 +56,16 @@ jobs:
       - name: Build wheels
         uses: PyO3/maturin-action@v1
         with:
-          target: ${{ matrix.platform.target }}
+          target: x86_64
           args: --release --out dist --find-interpreter
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
-          manylinux: auto
+          manylinux: 2_28
           before-script-linux: |
-            if command -v yum >/dev/null; then
-              yum install -y cmake clang clang-devel llvm-devel || yum install -y cmake3 clang
-            elif command -v apt-get >/dev/null; then
-              apt-get update && apt-get install -y cmake clang libclang-dev
-            fi
+            dnf install -y cmake clang clang-devel llvm-devel || yum install -y cmake clang clang-devel llvm-devel
       - name: Upload wheels
         uses: actions/upload-artifact@v6
         with:
-          name: wheels-linux-${{ matrix.platform.target }}
+          name: wheels-linux-x86_64
           path: dist
 
   macos:
