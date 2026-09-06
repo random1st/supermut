@@ -51,7 +51,7 @@ One Rust engine, thin bindings, language frontends behind a protocol:
 - `with_kv_unified(true)` in the core is load-bearing: the llama.cpp default gives each sequence its own KV stream and physically copies the prefix — wave decoding becomes *slower* than sequential. Context `n_seq_max` is sized to the actual batch so single generations don't pay for 17 streams.
 - The llama.cpp backend is a process-wide singleton with a deinitializing `Drop`; it lives in a `static OnceLock`. Never construct it per-Engine.
 - Every test subprocess sets `PYTHONDONTWRITEBYTECODE=1`: a mutant of identical file size restored within the same mtime second leaves its stale `.pyc` valid, and the next clean run imports the mutant.
-- Kotlin/Swift support (planned) cannot use the file-swap test cycle — compiled languages need mutation schemata (all mutants of a function compiled in once behind a runtime switch). Don't extend the file-swap harness to them.
+- Kotlin/Swift use mutation schemata (`schemata.py` + Gradle/SwiftTest runners), never the file-swap cycle: all mutants compile in once behind `SUPERMUT_MUTANT`, read exactly once at process start by an injected helper. Gradle needs the injected init script (env forwarding through the daemon + `upToDateWhen{false}` — without it a run where only the env changed is skipped as UP-TO-DATE and replays the previous verdict). `swift test`: xUnit XML only in `--parallel` mode, and only with the space-form `--xunit-output path`; per-mutant runs need `--skip-build`.
 - manylinux wheels require the `static-stdcxx` feature (AlmaLinux 8's GLIBCXX fails the 2_28 symbol audit) — see `.github/workflows/CI.yml` for the working matrix.
 
 ## Change control
