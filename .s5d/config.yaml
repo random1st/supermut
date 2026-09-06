@@ -1,0 +1,10 @@
+schema: '1.0'
+gate_commands:
+  typecheck:
+  - /Users/random1st/src/supermut/.s5d/harness/typecheck.sh
+engines: {}
+gate_runner:
+  env_inherit: true
+defaults:
+  tier: standard
+  evidence_retention_days: 90

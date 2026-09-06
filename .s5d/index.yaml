@@ -1,0 +1,6 @@
+features:
+- id: infer-core
+  spec_path: packages/infer-core__20260906.s5d.yaml
+  status: applied
+  product: supermut
+  version: 1.0.0

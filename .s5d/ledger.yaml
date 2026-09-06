@@ -1,0 +1,16 @@
+schema: '1.0'
+entries:
+- spec_sha256: sha256:6c44451017388b80ccf7aeec0b4d469afe0fb71318bf7f42d53f14c80c3e93a1
+  state_fingerprint: sha256:031350dfcca91588c1ae648210134be69e1cb5e2f137ad9ef12d8fba5b13c7b0
+  package_id: infer-core
+  action: import
+  status: success
+  timestamp: 2026-09-06T11:59:23.970573+00:00
+  record_ref: records/infer-core__20260906.record.yaml
+- spec_sha256: sha256:ccfd449d29fa07cdb24894df31be0bf1ec86657f55d91f00bd299ae468f5039a
+  state_fingerprint: sha256:cf42603eb162286380f85f81064d6b8ae5a55a2f28d062ba00d4388056ddc675
+  package_id: infer-core
+  action: import
+  status: success
+  timestamp: 2026-09-06T12:10:43.504025+00:00
+  record_ref: records/infer-core__20260906.record.yaml
