@@ -137,6 +137,17 @@ artifacts:
     - python/
     # covered_by_spec matches literal relative paths; list governed files explicitly
     - src/lib.rs
+    - crates/
+    - crates/core/src/lib.rs
+    - crates/core/Cargo.toml
+    - crates/py/src/lib.rs
+    - crates/py/Cargo.toml
+    - crates/node/src/lib.rs
+    - crates/node/Cargo.toml
+    - crates/node/build.rs
+    - crates/node/package.json
+    - crates/node/index.d.ts
+    - crates/node/test/engine.test.mjs
     - python/supermut/__init__.py
     - python/supermut/models.py
     - python/supermut/engine.py

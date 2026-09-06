@@ -1,0 +1,20 @@
+[package]
+name = "supermut-node"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "3", default-features = false, features = ["napi8"] }
+napi-derive = "3"
+supermut-core = { path = "../core" }
+
+[build-dependencies]
+napi-build = "2"
+
+[features]
+default = []
+cuda = ["supermut-core/cuda"]
+static-stdcxx = ["supermut-core/static-stdcxx"]

@@ -1,0 +1,17 @@
+[package]
+name = "supermut"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "supermut"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = "0.29.0"
+supermut-core = { path = "../core" }
+
+[features]
+default = []
+cuda = ["supermut-core/cuda"]
+static-stdcxx = ["supermut-core/static-stdcxx"]

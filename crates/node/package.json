@@ -1,0 +1,26 @@
+{
+  "name": "supermut",
+  "version": "0.1.0",
+  "description": "Fast local inference for mutation-test generation (llama.cpp core: Metal on macOS, CPU on Linux)",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "license": "MIT",
+  "engines": {
+    "node": ">= 18"
+  },
+  "napi": {
+    "binaryName": "supermut",
+    "targets": [
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-gnu"
+    ]
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "test": "node --test \"test/**/*.test.mjs\""
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0"
+  }
+}

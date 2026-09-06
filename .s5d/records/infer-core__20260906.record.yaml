@@ -1,6 +1,6 @@
-revision: 47
+revision: 49
 spec_ref: infer-core__20260906.s5d.yaml
-spec_sha256: sha256:bbf38c0080cf8106e761f9ee1c775ba37fe28ba95d74f123fbdbfcce06aa8362
+spec_sha256: sha256:4741ad807d224b03a2d8356e6f3c3cdb215bf5766444013a858a67df90ae6935
 status: approved
 sync_status: synced
 status_history:
@@ -62,6 +62,10 @@ status_history:
   timestamp: 2026-09-06T16:51:01.514903+00:00
 - status: approved
   timestamp: 2026-09-06T16:51:01.545432+00:00
+- status: previewed
+  timestamp: 2026-09-06T17:06:13.117391+00:00
+- status: approved
+  timestamp: 2026-09-06T17:06:13.144413+00:00
 active_phase: null
 phase_history: []
 phase_runs: []
@@ -118,9 +122,13 @@ approvals:
   date: 2026-09-06T16:51:01.545430+00:00
   spec_sha256: sha256:bbf38c0080cf8106e761f9ee1c775ba37fe28ba95d74f123fbdbfcce06aa8362
   diff_sha256: sha256:1236a889cc636083c26f008ca764ae8b5c55a6a6cbdc8ab4d9a140d13095c7ac
+- reviewer: roman
+  date: 2026-09-06T17:06:13.144411+00:00
+  spec_sha256: sha256:4741ad807d224b03a2d8356e6f3c3cdb215bf5766444013a858a67df90ae6935
+  diff_sha256: sha256:1236a889cc636083c26f008ca764ae8b5c55a6a6cbdc8ab4d9a140d13095c7ac
 preview:
   diff_sha256: sha256:1236a889cc636083c26f008ca764ae8b5c55a6a6cbdc8ab4d9a140d13095c7ac
-  previewed_spec_sha256: sha256:bbf38c0080cf8106e761f9ee1c775ba37fe28ba95d74f123fbdbfcce06aa8362
+  previewed_spec_sha256: sha256:4741ad807d224b03a2d8356e6f3c3cdb215bf5766444013a858a67df90ae6935
   actions:
     create: 0
     link: 3

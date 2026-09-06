@@ -22,6 +22,7 @@ tests = [
 ]
 
 [tool.maturin]
+manifest-path = "crates/py/Cargo.toml"
 python-source = "python"
 module-name = "supermut._core"
 exclude = [

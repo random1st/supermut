@@ -1,30 +1,6 @@
-[package]
-name = "supermut"
-version = "0.1.0"
-edition = "2024"
-
-[lib]
-name = "supermut"
-crate-type = ["cdylib"]
-
-[dependencies]
-pyo3 = "0.29.0"
-encoding_rs = "0.8"
-
-# Metal on macOS, plain CPU elsewhere (CI runners, Linux users).
-# CUDA is an opt-in build feature, not a default — keeps manylinux wheels portable.
-[target.'cfg(target_os = "macos")'.dependencies]
-llama-cpp-2 = { version = "0.1.156", features = ["metal"] }
-
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-llama-cpp-2 = { version = "0.1.156" }
-
-[features]
-default = []
-cuda = ["llama-cpp-2/cuda"]
-# Static libstdc++ for manylinux wheels: the AlmaLinux 8 toolchain's
-# GLIBCXX_3.4.25 symbols otherwise fail the 2_28 compliance audit.
-static-stdcxx = ["llama-cpp-2/static-stdcxx"]
+[workspace]
+members = ["crates/core", "crates/py", "crates/node"]
+resolver = "2"
 
 [profile.release]
 lto = "thin"
