@@ -130,13 +130,39 @@ def _git(repo: Path, *args: str) -> str:
     ).stdout
 
 
-def _show_file(repo: Path, commit: str, path: str) -> str | None:
-    proc = subprocess.run(
-        ["git", "-C", str(repo), "show", f"{commit}:{path}"],
-        capture_output=True,
-        text=True,
-    )
-    return proc.stdout if proc.returncode == 0 else None
+class _GitCatFile:
+    """Persistent `git cat-file --batch`: one process for the whole mine.
+
+    Spawning `git show` per file per commit dominates mining time on repos
+    with deep pack deltas (sqlalchemy, django) — hours instead of minutes.
+    """
+
+    def __init__(self, repo: Path):
+        self._proc = subprocess.Popen(
+            ["git", "-C", str(repo), "cat-file", "--batch"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+        )
+
+    def read(self, commit: str, path: str) -> str | None:
+        assert self._proc.stdin and self._proc.stdout
+        self._proc.stdin.write(f"{commit}:{path}\n".encode())
+        self._proc.stdin.flush()
+        header = self._proc.stdout.readline().decode()
+        if header.endswith("missing\n") or "blob" not in header:
+            return None
+        size = int(header.rsplit(" ", 1)[1])
+        body = self._proc.stdout.read(size)
+        self._proc.stdout.read(1)  # trailing newline
+        try:
+            return body.decode()
+        except UnicodeDecodeError:
+            return None
+
+    def close(self) -> None:
+        if self._proc.stdin:
+            self._proc.stdin.close()
+        self._proc.wait()
 
 
 def mine_repo(
@@ -158,32 +184,36 @@ def mine_repo(
         "--format=%H",
     )
     samples: list[Sample] = []
-    for commit in log.split():
-        files = _git(
-            repo, "diff-tree", "--no-commit-id", "--name-only", "-r", commit
-        ).split()
-        py_files = [f for f in files if f.endswith(".py") and "test" not in f]
-        # A focused fix touches few files; skip sprawling commits entirely.
-        if not py_files or len(py_files) > 3:
-            continue
-        for path in py_files:
-            old = _show_file(repo, f"{commit}~1", path)
-            new = _show_file(repo, commit, path)
-            if old is None or new is None:
+    cat = _GitCatFile(repo)
+    try:
+        for commit in log.split():
+            files = _git(
+                repo, "diff-tree", "--no-commit-id", "--name-only", "-r", commit
+            ).split()
+            py_files = [f for f in files if f.endswith(".py") and "test" not in f]
+            # A focused fix touches few files; skip sprawling commits entirely.
+            if not py_files or len(py_files) > 3:
                 continue
-            for name, old_func, new_func in extract_function_pairs(
-                old, new, max_changed_lines=max_changed_lines
-            ):
-                samples.append(
-                    Sample(
-                        repo=repo.name,
-                        commit=commit,
-                        file=path,
-                        function=name,
-                        fixed_source=new_func,
-                        buggy_source=old_func,
+            for path in py_files:
+                old = cat.read(f"{commit}~1", path)
+                new = cat.read(commit, path)
+                if old is None or new is None:
+                    continue
+                for name, old_func, new_func in extract_function_pairs(
+                    old, new, max_changed_lines=max_changed_lines
+                ):
+                    samples.append(
+                        Sample(
+                            repo=repo.name,
+                            commit=commit,
+                            file=path,
+                            function=name,
+                            fixed_source=new_func,
+                            buggy_source=old_func,
+                        )
                     )
-                )
+    finally:
+        cat.close()
     return samples
 
 
