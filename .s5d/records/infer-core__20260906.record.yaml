@@ -1,4 +1,4 @@
-revision: 64
+revision: 65
 spec_ref: infer-core__20260906.s5d.yaml
 spec_sha256: sha256:1d5f7d299627c0a77f6fb5051327c101fb5cb1754d6f660bf1e32f749a7e62fa
 status: approved
@@ -1285,6 +1285,54 @@ gate_results:
   command:
   - /Users/random1st/src/supermut/.s5d/harness/typecheck.sh
   duration_ms: 208
+  waiver_expires_at: null
+  kind_class: acceptance
+- kind: schema
+  status: passed
+  spec_sha256: sha256:1d5f7d299627c0a77f6fb5051327c101fb5cb1754d6f660bf1e32f749a7e62fa
+  subject_kind: governed_components
+  subject_sha256: sha256:a9ccea4a0f6ada90e3a96d7790379a79acd87dc92f3df23186be50bc60002b72
+  attempt: 24
+  timestamp: 2026-09-06T19:41:08.591169+00:00
+  log: schema validation passed (built-in)
+  exit_code: null
+  evidence_path: evidence/infer-core/schema_24.log
+  command: null
+  duration_ms: 10
+  waiver_expires_at: null
+  kind_class: eligibility
+- kind: graph
+  status: passed
+  spec_sha256: sha256:1d5f7d299627c0a77f6fb5051327c101fb5cb1754d6f660bf1e32f749a7e62fa
+  subject_kind: governed_components
+  subject_sha256: sha256:a9ccea4a0f6ada90e3a96d7790379a79acd87dc92f3df23186be50bc60002b72
+  attempt: 24
+  timestamp: 2026-09-06T19:41:08.601183+00:00
+  log: graph check passed (built-in)
+  exit_code: null
+  evidence_path: evidence/infer-core/graph_24.log
+  command: null
+  duration_ms: 9
+  waiver_expires_at: null
+  kind_class: eligibility
+- kind: typecheck
+  status: passed
+  spec_sha256: sha256:1d5f7d299627c0a77f6fb5051327c101fb5cb1754d6f660bf1e32f749a7e62fa
+  subject_kind: governed_components
+  subject_sha256: sha256:a9ccea4a0f6ada90e3a96d7790379a79acd87dc92f3df23186be50bc60002b72
+  attempt: 24
+  timestamp: 2026-09-06T19:41:08.822225+00:00
+  log: |
+    exit: exit status: 0
+    stdout:
+
+    stderr:
+        Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.12s
+  exit_code: 0
+  evidence_path: evidence/infer-core/typecheck_24.log
+  command:
+  - /Users/random1st/src/supermut/.s5d/harness/typecheck.sh
+  duration_ms: 210
   waiver_expires_at: null
   kind_class: acceptance
 decision: null

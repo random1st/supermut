@@ -43,6 +43,10 @@ class MutantStatus(str, Enum):
     SURVIVED = "survived"
     TIMEOUT = "timeout"
     NO_TESTS = "no_tests"
+    # schemata-only verdicts: the mutant never ran, and must never be
+    # conflated with a kill (compile-fail-as-kill inflates scores)
+    UNSUPPORTED = "unsupported"
+    COMPILE_ERROR = "compile_error"
 
 
 @dataclass
@@ -74,6 +78,14 @@ class Report:
         return sum(r.status is MutantStatus.NO_TESTS for r in self.results)
 
     @property
+    def unsupported(self) -> int:
+        return sum(r.status is MutantStatus.UNSUPPORTED for r in self.results)
+
+    @property
+    def compile_errors(self) -> int:
+        return sum(r.status is MutantStatus.COMPILE_ERROR for r in self.results)
+
+    @property
     def kill_rate(self) -> float:
         scored = self.killed + self.survived
         return self.killed / scored if scored else 0.0
@@ -87,7 +99,13 @@ class Report:
             f"file: {self.file}",
             f"mutants run: {len(self.results)} ({origins})  killed: {self.killed}  "
             f"survived: {self.survived}  no-tests: {self.no_tests}  "
-            f"kill rate: {self.kill_rate:.0%}",
+            + (
+                f"unsupported: {self.unsupported}  "
+                f"compile-errors: {self.compile_errors}  "
+                if self.unsupported or self.compile_errors
+                else ""
+            )
+            + f"kill rate: {self.kill_rate:.0%}",
         ]
         for r in self.results:
             if r.status is MutantStatus.SURVIVED:
@@ -245,7 +263,13 @@ def run(
     # Gate 2 — canary: all covered targets failing at once must fail
     # their tests.
     covered = [t for t in targets if selection.tests_by_function.get(t.name)]
-    canaries = _canary_mutants(covered, language)
+    # Schemata runners get their canary after the schemata build (a file
+    # swap would run against a stale binary here); see _schemata_verdicts.
+    canaries = (
+        []
+        if getattr(runner, "schemata", False)
+        else _canary_mutants(covered, language)
+    )
     if canaries:
         canary_tests = sorted(
             {test for t in covered for test in selection.tests_by_function[t.name]}
@@ -323,6 +347,17 @@ def run(
             mutants.append(m)
 
     report = Report(file=str(file))
+    if getattr(runner, "schemata", False):
+        try:
+            _schemata_verdicts(
+                report, file, original, cwd, runner, language, mutants,
+                selection, timeout_s, cache, file_key, hash_fn, on_progress,
+            )
+        finally:
+            file.write_text(original)
+            if cache:
+                cache.save()
+        return report
     try:
         for i, mutant in enumerate(mutants):
             t = mutant.target
@@ -369,3 +404,121 @@ def run(
         if cache:
             cache.save()
     return report
+
+
+def _schemata_verdicts(
+    report: Report,
+    file: Path,
+    original: str,
+    cwd: Path,
+    runner,
+    language,
+    mutants: list[Mutant],
+    selection: SelectionMap,
+    timeout_s: float,
+    cache: FunctionCache | None,
+    file_key: str,
+    hash_fn,
+    on_progress,
+) -> None:
+    """Compiled-language verdict cycle: one build, env-switched runs.
+
+    Every mutant is emitted exactly once — cached, UNSUPPORTED (can't
+    live in the schemata), COMPILE_ERROR (its variant broke the build,
+    recovered by dropping it and rebuilding, ≤3 attempts), or a real
+    run verdict.
+    """
+    from supermut.schemata import SchemataBuildError, build_schemata, failed_ids
+
+    total = len(mutants)
+    done = 0
+
+    def emit(mutant, status, duration=0.0, from_cache=False):
+        nonlocal done
+        if cache and not from_cache:
+            f_hash = hash_fn(_dedent(mutant.target.source, mutant.target.indent))
+            cache.store_verdict(
+                file_key, mutant.target.name, f_hash, mutant.source, status.value
+            )
+        report.results.append(MutantResult(mutant, status, duration, from_cache))
+        done += 1
+        if on_progress:
+            on_progress(done, total, status)
+
+    pending: list[Mutant] = []
+    for m in mutants:
+        f_hash = hash_fn(_dedent(m.target.source, m.target.indent))
+        cached_verdict = (
+            cache.cached_verdict(file_key, m.target.name, f_hash, m.source)
+            if cache
+            else None
+        )
+        if cached_verdict is not None:
+            emit(m, MutantStatus(cached_verdict), from_cache=True)
+        else:
+            pending.append(m)
+    if not pending:
+        return
+
+    build_timeout = max(timeout_s * 5, 300.0)
+    remaining = pending
+    schemata = None
+    for _ in range(3):
+        s = build_schemata(original, remaining, language)
+        for m, _reason in s.skipped:
+            emit(m, MutantStatus.UNSUPPORTED)
+        if not s.by_id:
+            return
+        try:
+            runner.prepare(file, cwd, s, build_timeout)
+            schemata = s
+            break
+        except SchemataBuildError as e:
+            bad = failed_ids(s.source, str(e), file.name)
+            if not bad:
+                raise RuntimeError(
+                    "schemata build failed outside every mutant block:\n"
+                    + str(e)[-2000:]
+                ) from e
+            for i in sorted(bad):
+                emit(s.by_id[i], MutantStatus.COMPILE_ERROR)
+            remaining = [m for i, m in sorted(s.by_id.items()) if i not in bad]
+            if not remaining:
+                return
+    if schemata is None:
+        raise RuntimeError("schemata build still failing after 3 recovery attempts")
+
+    try:
+        # Canary: the id that fails every dispatcher must turn the
+        # (already built) suite red, else the switch isn't reaching tests.
+        all_tests = sorted(
+            {t for tests in selection.tests_by_function.values() for t in tests}
+        )
+        if all_tests:
+            passed, _ = runner.run(
+                cwd, all_tests, timeout_s, mutant_id=schemata.canary_id
+            )
+            if passed:
+                raise RuntimeError(
+                    "canary mutants did not fail the suite — the schemata "
+                    "switch is not reaching the tests; verdicts would be "
+                    "meaningless"
+                )
+
+        for mid, m in sorted(schemata.by_id.items()):
+            tests = selection.tests_for(m.target)
+            if not tests:
+                emit(m, MutantStatus.NO_TESTS)
+                continue
+            t0 = time.time()
+            passed, timed_out = runner.run(cwd, tests, timeout_s, mutant_id=mid)
+            duration = time.time() - t0
+            if timed_out:
+                status = MutantStatus.TIMEOUT
+            elif passed:
+                status = MutantStatus.SURVIVED
+            else:
+                status = MutantStatus.KILLED
+            emit(m, status, duration)
+    finally:
+        runner.cleanup(file, original, schemata)

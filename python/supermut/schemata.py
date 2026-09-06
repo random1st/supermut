@@ -29,15 +29,21 @@ UNSUPPORTED, never as kills.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 import tree_sitter
 
 from supermut.mutate import Mutant, _dedent, _reindent
 
-__all__ = ["Schemata", "build_schemata", "SUPERMUT_ENV"]
+__all__ = ["Schemata", "build_schemata", "failed_ids", "SUPERMUT_ENV"]
 
 SUPERMUT_ENV = "SUPERMUT_MUTANT"
+
+# Variant blocks are fenced with these comments so compiler diagnostics
+# (file:line) map back to a mutant id when the schemata build fails.
+_BEGIN = "// __supermut_begin_{id}"
+_END = "// __supermut_end_{id}"
 
 _KOTLIN_HELPER = """\
 {package}internal object __Supermut {{
@@ -198,7 +204,13 @@ def _build_kotlin_block(
         mfunc = _func_node(language, msource)
         if mfunc is None:
             continue
-        parts.append(_kt_variant(msource, mfunc, f"{name}__sm_{mid}"))
+        parts.append(
+            _BEGIN.format(id=mid)
+            + "\n"
+            + _kt_variant(msource, mfunc, f"{name}__sm_{mid}")
+            + "\n"
+            + _END.format(id=mid)
+        )
         accepted.append((mid, msource))
     dispatcher = _kt_dispatcher(
         dedented, func, [mid for mid, _ in accepted], canary_id
@@ -279,7 +291,16 @@ def _build_swift_block(
         mfunc = _func_node(language, msource)
         if mfunc is None:
             continue
-        nested.append(_reindent(_swift_variant(msource, mfunc, f"__sm_{mid}"), "    "))
+        nested.append(
+            _reindent(
+                _BEGIN.format(id=mid)
+                + "\n"
+                + _swift_variant(msource, mfunc, f"__sm_{mid}")
+                + "\n"
+                + _END.format(id=mid),
+                "    ",
+            )
+        )
         cases.append(
             f"    case {mid}: return {call_prefix}__sm_{mid}({', '.join(args)})"
         )
@@ -351,6 +372,36 @@ def build_schemata(module_source: str, mutants: list[Mutant], language) -> Schem
         )
     schemata.source = out
     return schemata
+
+
+class SchemataBuildError(RuntimeError):
+    """The schemata build failed; the message carries compiler diagnostics."""
+
+
+def failed_ids(schemata_source: str, diagnostics: str, file_name: str) -> set[int]:
+    """Mutant ids whose fenced variant block owns a compile error.
+
+    Both swiftc and kotlinc emit ``path/file:line:col: error: …``; any
+    error line falling inside a ``__supermut_begin/end`` fence names its
+    mutant. Errors outside every fence return an empty set — the caller
+    must surface those instead of dropping mutants blindly.
+    """
+    enclosing: dict[int, int] = {}
+    current: int | None = None
+    for lineno, line in enumerate(schemata_source.split("\n"), 1):
+        s = line.strip()
+        if s.startswith("// __supermut_begin_"):
+            current = int(s.rsplit("_", 1)[1])
+        if current is not None:
+            enclosing[lineno] = current
+        if s.startswith("// __supermut_end_"):
+            current = None
+    pattern = re.compile(re.escape(file_name) + r":(\d+)(?::\d+)?: *error")
+    return {
+        enclosing[int(m.group(1))]
+        for m in pattern.finditer(diagnostics)
+        if int(m.group(1)) in enclosing
+    }
 
 
 def _helper_source(module_source: str, language) -> str:

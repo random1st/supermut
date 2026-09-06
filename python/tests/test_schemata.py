@@ -186,6 +186,142 @@ def test_swift_schemata_typechecks_and_switches(tmp_path):
     assert canary.returncode != 0  # fatalError fired
 
 
+# Captured from `swift test --parallel --xunit-output res.xml`
+# (Swift 6.3.3; the XCTest xUnit file is only written in --parallel mode).
+XUNIT = """<?xml version="1.0" encoding="UTF-8"?>
+
+<testsuites>
+<testsuite name="TestResults" errors="0" tests="2" failures="0" time="0.097650084">
+<testcase classname="DemoTests.CalcTests" name="testClamp" time="0.048824584">
+</testcase>
+<testcase classname="DemoTests.CalcTests" name="testAdd" time="0.0488255">
+</testcase>
+</testsuite>
+</testsuites>
+"""
+
+
+def test_parse_xunit():
+    from supermut.runners import _parse_xunit
+
+    durations = _parse_xunit(XUNIT)
+    assert durations == {
+        "DemoTests.CalcTests/testClamp": pytest.approx(0.0488, abs=1e-3),
+        "DemoTests.CalcTests/testAdd": pytest.approx(0.0488, abs=1e-3),
+    }
+
+
+def test_failed_ids_maps_diagnostics_to_fences():
+    from supermut.schemata import failed_ids
+
+    src = "\n".join(
+        [
+            "func f() {}",  # 1
+            "// __supermut_begin_3",  # 2
+            "func __sm_3() {}",  # 3
+            "// __supermut_end_3",  # 4
+            "func g() {}",  # 5
+        ]
+    )
+    diag = "/pkg/Sources/Calc.swift:3:10: error: cannot convert value"
+    assert failed_ids(src, diag, "Calc.swift") == {3}
+    # errors outside every fence map to nothing — caller must surface them
+    assert failed_ids(src, "/pkg/Sources/Calc.swift:5:1: error: boom", "Calc.swift") == set()
+    assert failed_ids(src, "/pkg/Sources/Calc.swift:3:1: warning: unused", "Calc.swift") == set()
+
+
+needs_swift_spm = pytest.mark.skipif(
+    shutil.which("swift") is None, reason="swift toolchain not installed"
+)
+
+SPM_CALC = textwrap.dedent(
+    """\
+    public func add(_ a: Int, _ b: Int) -> Int {
+        return a + b
+    }
+    """
+)
+
+
+def _make_spm_package(tmp_path):
+    (tmp_path / "Sources" / "Demo").mkdir(parents=True)
+    (tmp_path / "Tests" / "DemoTests").mkdir(parents=True)
+    (tmp_path / "Package.swift").write_text(
+        textwrap.dedent(
+            """\
+            // swift-tools-version:5.9
+            import PackageDescription
+
+            let package = Package(
+                name: "Demo",
+                targets: [
+                    .target(name: "Demo"),
+                    .testTarget(name: "DemoTests", dependencies: ["Demo"]),
+                ]
+            )
+            """
+        )
+    )
+    calc = tmp_path / "Sources" / "Demo" / "Calc.swift"
+    calc.write_text(SPM_CALC)
+    (tmp_path / "Tests" / "DemoTests" / "CalcTests.swift").write_text(
+        textwrap.dedent(
+            """\
+            import XCTest
+            @testable import Demo
+
+            final class CalcTests: XCTestCase {
+                func testAdd() {
+                    XCTAssertEqual(Demo.add(2, 3), 5)
+                }
+            }
+            """
+        )
+    )
+    return calc
+
+
+class _StubLLM:
+    def __init__(self, completions):
+        self._completions = completions
+
+    def generate_batch(self, prefix, continuations, **kwargs):
+        return self._completions[: len(continuations)]
+
+
+@needs_swift_spm
+def test_swift_full_cycle(tmp_path):
+    from supermut.harness import MutantStatus, run
+
+    calc = _make_spm_package(tmp_path)
+    llm = _StubLLM(["    return a - b\n}"])
+    report = run(
+        calc, "", llm, cwd=tmp_path, n_per_target=1, use_cache=False,
+        timeout_s=240,
+    )
+    assert calc.read_text() == SPM_CALC  # restored
+    assert not (tmp_path / "Sources" / "Demo" / "__supermut_helper.swift").exists()
+    statuses = [r.status for r in report.results]
+    assert statuses == [MutantStatus.KILLED]
+
+
+@needs_swift_spm
+def test_swift_compile_error_recovery(tmp_path):
+    from supermut.harness import MutantStatus, run
+
+    calc = _make_spm_package(tmp_path)
+    # First mutant parses but cannot typecheck (String for Int);
+    # recovery must drop it, rebuild, and still score the real mutant.
+    llm = _StubLLM(['    return "oops"\n}', "    return a - b\n}"])
+    report = run(
+        calc, "", llm, cwd=tmp_path, n_per_target=2, use_cache=False,
+        timeout_s=240,
+    )
+    assert calc.read_text() == SPM_CALC
+    by_status = {r.status for r in report.results}
+    assert by_status == {MutantStatus.COMPILE_ERROR, MutantStatus.KILLED}
+
+
 @needs_kotlinc
 def test_kotlin_schemata_typechecks(tmp_path):
     mutants = _mutants(

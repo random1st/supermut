@@ -33,6 +33,7 @@ __all__ = [
     "PytestRunner",
     "VitestRunner",
     "JestRunner",
+    "SwiftTestRunner",
     "runner_for",
 ]
 
@@ -240,6 +241,120 @@ class JestRunner(_NodeRunner):
         return cmd + ["--bail", "--no-cache", *self.args]
 
 
+@dataclass
+class SwiftTestRunner:
+    """SPM: build tests once per schemata, flip mutants via SUPERMUT_MUTANT.
+
+    Baseline runs ``swift test --parallel --xunit-output`` — on this
+    toolchain the XCTest xUnit file is only written in parallel mode.
+    Per-mutant runs use ``--skip-build`` (a filtered run without it
+    rebuilds) with serial execution for clean verdicts. Selection is
+    module-granular: SPM has no cheap related-test mapping, so every
+    function maps to the whole suite.
+    """
+
+    args: list[str] = field(default_factory=list)
+    command: tuple[str, ...] = ("swift",)
+    name: str = "swift-test"
+    schemata: bool = True
+
+    def baseline(
+        self,
+        file: Path,
+        cwd: Path,
+        targets: list[FunctionTarget],
+        timeout_s: float,
+    ) -> SelectionMap:
+        with tempfile.TemporaryDirectory(prefix="supermut-swift-") as tmp:
+            out = Path(tmp) / "res.xml"
+            proc = subprocess.run(
+                [
+                    *self.command,
+                    "test",
+                    "--parallel",
+                    # space form is load-bearing: `--xunit-output=path` puts
+                    # the (empty) swift-testing report at `path` instead of
+                    # the XCTest one on this toolchain (Swift 6.3.3)
+                    "--xunit-output",
+                    str(out),
+                    *self.args,
+                ],
+                cwd=cwd,
+                capture_output=True,
+                timeout=timeout_s,
+            )
+            if proc.returncode != 0 or not out.exists():
+                raise RuntimeError(
+                    "instrumented baseline run failed:\n"
+                    + (proc.stderr or proc.stdout).decode(errors="replace")[-2000:]
+                )
+            durations = _parse_xunit(out.read_text())
+        selection = SelectionMap(duration_by_test=durations)
+        for t in targets:
+            selection.tests_by_function[t.name] = set(durations)
+        return selection
+
+    def prepare(self, file: Path, cwd: Path, schemata, timeout_s: float) -> None:
+        from supermut.schemata import SchemataBuildError
+
+        file.write_text(schemata.source)
+        (file.parent / schemata.helper_filename).write_text(schemata.helper_source)
+        proc = subprocess.run(
+            [*self.command, "build", "--build-tests", *self.args],
+            cwd=cwd,
+            capture_output=True,
+            timeout=timeout_s,
+        )
+        if proc.returncode != 0:
+            raise SchemataBuildError(
+                (proc.stderr or proc.stdout).decode(errors="replace")
+            )
+
+    def run(
+        self,
+        cwd: Path,
+        tests: list[str] | None,
+        timeout_s: float,
+        mutant_id: int | None = None,
+    ) -> tuple[bool, bool]:
+        cmd = [*self.command, "test", "--skip-build"]
+        for t in tests or []:
+            cmd += ["--filter", t]
+        env = dict(os.environ)
+        if mutant_id is not None:
+            env["SUPERMUT_MUTANT"] = str(mutant_id)
+        else:
+            env.pop("SUPERMUT_MUTANT", None)
+        try:
+            proc = subprocess.run(
+                cmd + self.args,
+                cwd=cwd,
+                capture_output=True,
+                timeout=timeout_s,
+                env=env,
+            )
+            return proc.returncode == 0, False
+        except subprocess.TimeoutExpired:
+            return False, True
+
+    def cleanup(self, file: Path, original: str, schemata) -> None:
+        file.write_text(original)
+        helper = file.parent / schemata.helper_filename
+        if helper.exists():
+            helper.unlink()
+
+
+def _parse_xunit(xml_text: str) -> dict[str, float]:
+    """test id (``Target.Class/method``, the --filter format) -> seconds."""
+    import xml.etree.ElementTree as ET
+
+    durations: dict[str, float] = {}
+    for case in ET.fromstring(xml_text).iter("testcase"):
+        test_id = f"{case.get('classname')}/{case.get('name')}"
+        durations[test_id] = float(case.get("time") or 0.0)
+    return durations
+
+
 def _package_json(cwd: Path) -> dict:
     try:
         return json.loads((cwd / "package.json").read_text())
@@ -264,6 +379,19 @@ def runner_for(
     args = shlex.split(tests)
     if language_name == "python":
         return PytestRunner(args=args, python=python)
+    if language_name == "swift":
+        if not (cwd / "Package.swift").exists():
+            raise RuntimeError(
+                f"no Package.swift in {cwd}: Swift runs need an SPM package "
+                "(pass cwd= / --cwd pointing at the package root)"
+            )
+        cmd = tuple(shlex.split(command)) if command else ("swift",)
+        return SwiftTestRunner(args=args, command=cmd)
+    if language_name == "kotlin":
+        raise RuntimeError(
+            "kotlin test-runner integration is not wired yet (schemata "
+            "assembly exists; gradle runner is next)"
+        )
 
     pkg = _package_json(cwd)
     deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
