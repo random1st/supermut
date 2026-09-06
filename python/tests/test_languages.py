@@ -2,6 +2,8 @@
 
 import pytest
 
+pytest.importorskip("tree_sitter", reason="languages extra not installed")
+
 from supermut.languages import all_languages, language_by_name, language_for_path
 
 SOURCES = {

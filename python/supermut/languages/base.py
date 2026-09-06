@@ -54,8 +54,14 @@ def language_by_name(name: str) -> Language:
 
 
 def _ensure_loaded() -> None:
-    # Import for registration side effects.
-    from supermut.languages import python_lang, treesitter  # noqa: F401
+    # Import for registration side effects. tree-sitter grammars are an
+    # optional extra — without them only Python registers.
+    from supermut.languages import python_lang  # noqa: F401
+
+    try:
+        from supermut.languages import treesitter  # noqa: F401
+    except ImportError:
+        pass
 
 
 def all_languages() -> dict[str, Language]:
