@@ -43,6 +43,7 @@ class Sample:
     function: str
     fixed_source: str  # after the fix — the prompt side
     buggy_source: str  # before the fix — the completion side
+    language: str = "python"
 
 
 def _functions_by_name(module_source: str) -> dict[str, str]:
@@ -87,12 +88,29 @@ def _normalize(source: str) -> str | None:
         return None
 
 
+def _functions_via_language(module_source: str, language) -> dict[str, str]:
+    """name -> source via a Language frontend; duplicate names skipped
+    (tree-sitter targets aren't class-qualified, so same-named methods in
+    different classes would produce false pairs)."""
+    counts: dict[str, int] = {}
+    sources: dict[str, str] = {}
+    try:
+        targets = language.find_targets(module_source)
+    except Exception:
+        return {}
+    for t in targets:
+        counts[t.name] = counts.get(t.name, 0) + 1
+        sources[t.name] = t.source
+    return {n: s for n, s in sources.items() if counts[n] == 1}
+
+
 def extract_function_pairs(
     old_source: str,
     new_source: str,
     *,
     max_changed_lines: int = 12,
     max_function_lines: int = 60,
+    language=None,
 ) -> list[tuple[str, str, str]]:
     """(name, old_func, new_func) for functions whose AST changed.
 
@@ -101,15 +119,24 @@ def extract_function_pairs(
     ``max_function_lines`` are skipped: a small model can't attend to a
     168-line prompt, and huge functions dilute the "one subtle change"
     signal anyway.
+
+    ``language=None`` keeps the Python-native path (class-qualified names);
+    passing a Language frontend mines that language instead.
     """
-    old_funcs = _functions_by_name(old_source)
-    new_funcs = _functions_by_name(new_source)
+    if language is not None and getattr(language, "name", "python") != "python":
+        old_funcs = _functions_via_language(old_source, language)
+        new_funcs = _functions_via_language(new_source, language)
+        norm = language.normalize
+    else:
+        old_funcs = _functions_by_name(old_source)
+        new_funcs = _functions_by_name(new_source)
+        norm = _normalize
     changed = []
     for name in old_funcs.keys() & new_funcs.keys():
         old_f, new_f = old_funcs[name], new_funcs[name]
         if max(len(old_f.split("\n")), len(new_f.split("\n"))) > max_function_lines:
             continue
-        old_n, new_n = _normalize(old_f), _normalize(new_f)
+        old_n, new_n = norm(old_f), norm(new_f)
         if old_n is None or new_n is None or old_n == new_n:
             continue
         delta = abs(len(old_f.split("\n")) - len(new_f.split("\n")))
@@ -170,8 +197,19 @@ def mine_repo(
     *,
     max_commits: int = 2000,
     max_changed_lines: int = 12,
+    languages: list[str] | None = None,
 ) -> list[Sample]:
-    """Walk fix-shaped commits, emit (fixed, buggy) function pairs."""
+    """Walk fix-shaped commits, emit (fixed, buggy) function pairs.
+
+    ``languages`` limits mining to those frontends (default: all
+    registered — python, javascript, typescript, kotlin, swift).
+    """
+    from supermut.languages import all_languages, language_for_path
+
+    langs = all_languages()
+    if languages is not None:
+        langs = {k: v for k, v in langs.items() if k in languages}
+    extensions = tuple(ext for lang in langs.values() for ext in lang.extensions)
     repo = Path(repo).resolve()
     log = _git(
         repo,
@@ -190,17 +228,25 @@ def mine_repo(
             files = _git(
                 repo, "diff-tree", "--no-commit-id", "--name-only", "-r", commit
             ).split()
-            py_files = [f for f in files if f.endswith(".py") and "test" not in f]
+            src_files = [
+                f for f in files if f.endswith(extensions) and "test" not in f.lower()
+            ]
             # A focused fix touches few files; skip sprawling commits entirely.
-            if not py_files or len(py_files) > 3:
+            if not src_files or len(src_files) > 3:
                 continue
-            for path in py_files:
+            for path in src_files:
+                language = language_for_path(path)
+                if language is None or language.name not in langs:
+                    continue
                 old = cat.read(f"{commit}~1", path)
                 new = cat.read(commit, path)
                 if old is None or new is None:
                     continue
                 for name, old_func, new_func in extract_function_pairs(
-                    old, new, max_changed_lines=max_changed_lines
+                    old,
+                    new,
+                    max_changed_lines=max_changed_lines,
+                    language=language,
                 ):
                     samples.append(
                         Sample(
@@ -210,6 +256,7 @@ def mine_repo(
                             function=name,
                             fixed_source=new_func,
                             buggy_source=old_func,
+                            language=language.name,
                         )
                     )
     finally:
@@ -218,12 +265,22 @@ def mine_repo(
 
 
 def to_prompt_completion(sample: Sample) -> dict[str, str]:
-    """Render a sample in the exact harness prompt format."""
+    """Render a sample in the exact harness prompt format.
+
+    The comment prefix follows the sample's language, so one multilingual
+    model sees `#` for Python and `//` for JS/TS/Kotlin/Swift.
+    """
+    from supermut.languages import language_by_name
+
+    cp = language_by_name(sample.language).comment_prefix
     header = sample.buggy_source.split("\n")[0]
+    mutant_header = "\n".join(
+        cp + line.lstrip("#") for line in _MUTANT_HEADER.rstrip().split("\n")
+    )
     prompt = (
-        "# Original function:\n"
+        f"{cp} Original function:\n"
         f"{sample.fixed_source}\n\n"
-        f"{_MUTANT_HEADER}"
+        f"{mutant_header}\n"
         f"{header}\n"
     )
     completion = "\n".join(sample.buggy_source.split("\n")[1:])

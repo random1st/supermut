@@ -28,9 +28,12 @@ workflow:
       Language-agnostic mutation-testing engine: Rust inference core
       (tokens in/out, no language knowledge) + per-language frontends
       behind a Language protocol (find_targets / validate / test-runner /
-      selection). Python frontend first (ast + pytest + coverage.py);
-      JS/TS frontend later (tree-sitter + vitest/jest + istanbul).
-      One fine-tuned mutant model, retrainable multilingually.
+      selection). Five languages (Roman 2026-09-06): Python (ast+pytest,
+      shipped), JS/TS/Kotlin/Swift via one shared tree-sitter parser
+      layer. Interpreted languages use file-swap test cycles; compiled
+      (Kotlin/Swift) use mutation schemata: all mutants of a function
+      compiled in once behind a runtime switch, one build per file.
+      One fine-tuned multilingual mutant model (v3+).
     invariants:
     - Inference core never parses source code; only the Language layer does
     - Training prompt format == serving prompt format, per language
@@ -154,6 +157,11 @@ artifacts:
     - python/supermut/cache.py
     - python/supermut/dataset.py
     - python/supermut/synthetic.py
+    - python/supermut/languages/__init__.py
+    - python/supermut/languages/base.py
+    - python/supermut/languages/treesitter.py
+    - python/supermut/languages/python_lang.py
+    - python/tests/test_languages.py
     - python/tests/test_dataset.py
     - python/tests/test_synthetic.py
     - python/tests/test_selection.py
