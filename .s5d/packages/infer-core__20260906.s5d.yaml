@@ -155,6 +155,10 @@ artifacts:
     - Cargo.toml
     - pyproject.toml
     - README.md
+    - bench/
+    - bench/target_module.py
+    - bench/tests/test_target.py
+    - bench/run_bench.py
     product_criticality: null
     owner: null
   roles: []
