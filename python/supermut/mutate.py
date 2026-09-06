@@ -30,6 +30,7 @@ class Mutant:
 
     target: FunctionTarget
     source: str  # replacement function source, original indentation
+    origin: str = "llm"  # "llm" | "operator"
 
 
 def find_targets(module_source: str) -> list[FunctionTarget]:

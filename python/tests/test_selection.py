@@ -108,6 +108,25 @@ class _StubLLM:
         return ["    return n % 2 == 1"] * len(continuations)
 
 
+def test_run_operators_only(bed):
+    """No model at all: the operator arm works standalone."""
+    report = run(
+        bed / "calc.py",
+        "-q test_calc.py",
+        None,
+        cwd=bed,
+        python=sys.executable,
+        timeout_s=60,
+    )
+    assert report.results, "operator arm produced no mutants"
+    assert all(r.mutant.origin == "operator" for r in report.results)
+    add_results = [r for r in report.results if r.mutant.target.name == "add"]
+    assert add_results and all(
+        r.status is MutantStatus.KILLED for r in add_results
+    )
+    assert "operator:" in report.summary()
+
+
 def test_run_stub_full_mechanics(bed):
     """Model-free end-to-end: gates, selection, no-tests, cache."""
     report = run(
@@ -118,6 +137,7 @@ def test_run_stub_full_mechanics(bed):
         python=sys.executable,
         n_per_target=1,
         timeout_s=60,
+        operators=False,
     )
     by_target = {r.mutant.target.name: r for r in report.results}
     assert by_target["add"].status is MutantStatus.KILLED
@@ -136,6 +156,7 @@ def test_run_stub_full_mechanics(bed):
         python=sys.executable,
         n_per_target=1,
         timeout_s=60,
+        operators=False,
     )
     assert all(r.from_cache for r in report2.results if r.status is MutantStatus.KILLED)
     assert Path(bed / CACHE_NAME).exists()

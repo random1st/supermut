@@ -25,7 +25,13 @@ def main(argv: list[str] | None = None) -> int:
         "--no-cache", action="store_true", help="ignore .supermut-cache.json"
     )
     parser.add_argument(
-        "--model", required=True, help="GGUF path or HF repo id"
+        "--model", help="GGUF path or HF repo id (omit with --operators-only)"
+    )
+    parser.add_argument(
+        "--llm-only", action="store_true", help="skip cheap operator mutants"
+    )
+    parser.add_argument(
+        "--operators-only", action="store_true", help="no model, operator arm alone"
     )
     parser.add_argument("--filename", help="GGUF filename inside the HF repo")
     parser.add_argument("--cwd", help="directory to run tests from (default: file's dir)")
@@ -37,7 +43,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--n-ctx", type=int, default=4096)
     args = parser.parse_args(argv)
 
-    llm = LLM.from_pretrained(args.model, filename=args.filename, n_ctx=args.n_ctx)
+    if args.operators_only:
+        llm = None
+    elif args.model:
+        llm = LLM.from_pretrained(args.model, filename=args.filename, n_ctx=args.n_ctx)
+    else:
+        parser.error("--model is required unless --operators-only")
 
     def progress(done: int, total: int, status) -> None:
         print(f"[{done}/{total}] {status.value}", flush=True)
@@ -54,6 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         seed=args.seed,
         timeout_s=args.timeout,
         use_cache=not args.no_cache,
+        operators=not args.llm_only,
         on_progress=progress,
     )
     print()

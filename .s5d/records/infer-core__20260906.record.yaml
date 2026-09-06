@@ -1,4 +1,4 @@
-revision: 44
+revision: 47
 spec_ref: infer-core__20260906.s5d.yaml
 spec_sha256: sha256:bbf38c0080cf8106e761f9ee1c775ba37fe28ba95d74f123fbdbfcce06aa8362
 status: approved
@@ -58,6 +58,10 @@ status_history:
   timestamp: 2026-09-06T16:38:10.711939+00:00
 - status: approved
   timestamp: 2026-09-06T16:38:10.746634+00:00
+- status: previewed
+  timestamp: 2026-09-06T16:51:01.514903+00:00
+- status: approved
+  timestamp: 2026-09-06T16:51:01.545432+00:00
 active_phase: null
 phase_history: []
 phase_runs: []
@@ -108,6 +112,10 @@ approvals:
   diff_sha256: sha256:1236a889cc636083c26f008ca764ae8b5c55a6a6cbdc8ab4d9a140d13095c7ac
 - reviewer: roman
   date: 2026-09-06T16:38:10.746632+00:00
+  spec_sha256: sha256:bbf38c0080cf8106e761f9ee1c775ba37fe28ba95d74f123fbdbfcce06aa8362
+  diff_sha256: sha256:1236a889cc636083c26f008ca764ae8b5c55a6a6cbdc8ab4d9a140d13095c7ac
+- reviewer: roman
+  date: 2026-09-06T16:51:01.545430+00:00
   spec_sha256: sha256:bbf38c0080cf8106e761f9ee1c775ba37fe28ba95d74f123fbdbfcce06aa8362
   diff_sha256: sha256:1236a889cc636083c26f008ca764ae8b5c55a6a6cbdc8ab4d9a140d13095c7ac
 preview:
@@ -933,6 +941,57 @@ gate_results:
   command:
   - /Users/random1st/src/supermut/.s5d/harness/typecheck.sh
   duration_ms: 413
+  waiver_expires_at: null
+  kind_class: acceptance
+- kind: schema
+  status: passed
+  spec_sha256: sha256:bbf38c0080cf8106e761f9ee1c775ba37fe28ba95d74f123fbdbfcce06aa8362
+  subject_kind: governed_components
+  subject_sha256: sha256:a17ee07747ad164cacdf47441a043b4327cef6b3928b6e173aeeb6c112e0ef23
+  attempt: 18
+  timestamp: 2026-09-06T16:51:01.613789+00:00
+  log: schema validation passed (built-in)
+  exit_code: null
+  evidence_path: evidence/infer-core/schema_18.log
+  command: null
+  duration_ms: 9
+  waiver_expires_at: null
+  kind_class: eligibility
+- kind: graph
+  status: passed
+  spec_sha256: sha256:bbf38c0080cf8106e761f9ee1c775ba37fe28ba95d74f123fbdbfcce06aa8362
+  subject_kind: governed_components
+  subject_sha256: sha256:a17ee07747ad164cacdf47441a043b4327cef6b3928b6e173aeeb6c112e0ef23
+  attempt: 18
+  timestamp: 2026-09-06T16:51:01.621755+00:00
+  log: graph check passed (built-in)
+  exit_code: null
+  evidence_path: evidence/infer-core/graph_18.log
+  command: null
+  duration_ms: 7
+  waiver_expires_at: null
+  kind_class: eligibility
+- kind: typecheck
+  status: passed
+  spec_sha256: sha256:bbf38c0080cf8106e761f9ee1c775ba37fe28ba95d74f123fbdbfcce06aa8362
+  subject_kind: governed_components
+  subject_sha256: sha256:a17ee07747ad164cacdf47441a043b4327cef6b3928b6e173aeeb6c112e0ef23
+  attempt: 18
+  timestamp: 2026-09-06T16:51:03.711080+00:00
+  log: |
+    exit: exit status: 0
+    stdout:
+
+    stderr:
+       Compiling pyo3-ffi v0.29.2
+       Compiling pyo3 v0.29.2
+        Checking supermut v0.1.0 (/Users/random1st/src/supermut)
+        Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.01s
+  exit_code: 0
+  evidence_path: evidence/infer-core/typecheck_18.log
+  command:
+  - /Users/random1st/src/supermut/.s5d/harness/typecheck.sh
+  duration_ms: 2076
   waiver_expires_at: null
   kind_class: acceptance
 decision: null

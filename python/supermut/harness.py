@@ -28,6 +28,8 @@ from supermut.mutate import (
     FunctionTarget,
     Mutant,
     _dedent,
+    _normalize,
+    _reindent,
     find_targets,
     generate_mutants,
 )
@@ -80,9 +82,13 @@ class Report:
         return self.killed / scored if scored else 0.0
 
     def summary(self) -> str:
+        by_origin: dict[str, int] = {}
+        for r in self.results:
+            by_origin[r.mutant.origin] = by_origin.get(r.mutant.origin, 0) + 1
+        origins = "  ".join(f"{k}: {v}" for k, v in sorted(by_origin.items()))
         lines = [
             f"file: {self.file}",
-            f"mutants run: {len(self.results)}  killed: {self.killed}  "
+            f"mutants run: {len(self.results)} ({origins})  killed: {self.killed}  "
             f"survived: {self.survived}  no-tests: {self.no_tests}  "
             f"kill rate: {self.kill_rate:.0%}",
         ]
@@ -96,7 +102,9 @@ class Report:
                     ),
                     "",
                 )
-                lines.append(f"  SURVIVED {r.mutant.target.name}: {first[:80]}")
+                lines.append(
+                    f"  SURVIVED [{r.mutant.origin}] {r.mutant.target.name}: {first[:80]}"
+                )
         return "\n".join(lines)
 
     def to_json(self) -> str:
@@ -111,6 +119,7 @@ class Report:
                 "mutants": [
                     {
                         "target": r.mutant.target.name,
+                        "origin": r.mutant.origin,
                         "status": r.status.value,
                         "duration_s": round(r.duration_s, 3),
                         "from_cache": r.from_cache,
@@ -182,7 +191,7 @@ def _run_pytest(
 def run(
     file: str | Path,
     tests: str,
-    llm: "LLM",
+    llm: "LLM | None",
     *,
     cwd: str | Path | None = None,
     python: str = sys.executable,
@@ -192,11 +201,14 @@ def run(
     seed: int = 42,
     timeout_s: float = 60.0,
     use_cache: bool = True,
+    operators: bool = True,
+    operator_mutants: int = 6,
     on_progress=None,
 ) -> Report:
     """Full cycle for one module. ``tests`` is the pytest argument string
-    (e.g. ``"-q tests/"``). The target file is swapped in place with a
-    guaranteed restore; run from a clean working tree.
+    (e.g. ``"-q tests/"``). ``llm=None`` runs the operator arm alone.
+    The target file is swapped in place with a guaranteed restore; run
+    from a clean working tree.
     """
     file = Path(file).resolve()
     cwd = Path(cwd).resolve() if cwd else file.parent
@@ -229,28 +241,58 @@ def run(
     cache = FunctionCache(cwd / CACHE_NAME) if use_cache else None
     file_key = str(file)
 
-    # Generate (or recall) mutants per target.
+    # Generate (or recall) mutants per target. Hybrid by default: cheap
+    # operator mutants (the mutmut-class catalogue) plus LLM naturals —
+    # on the bench the union finds holes neither arm finds alone.
     mutants: list[Mutant] = []
     for t_idx, target in enumerate(targets):
-        f_hash = function_hash(_dedent(target.source, target.indent))
+        dedented = _dedent(target.source, target.indent)
+        f_hash = function_hash(dedented)
+        seen_norms: set[str] = set()
+
+        if operators:
+            from supermut.synthetic import mutate_function
+
+            for mutated, _op in mutate_function(dedented, max_mutants=operator_mutants):
+                norm = _normalize(mutated)
+                if norm is None or norm in seen_norms:
+                    continue
+                seen_norms.add(norm)
+                mutants.append(
+                    Mutant(
+                        target=target,
+                        source=_reindent(mutated, target.indent),
+                        origin="operator",
+                    )
+                )
+
+        if llm is None:
+            continue
         cached = cache.cached_mutants(file_key, target.name, f_hash) if cache else None
         if cached is not None:
-            mutants.extend(Mutant(target=target, source=src) for src in cached)
-            continue
-        fresh = generate_mutants(
-            llm,
-            original,
-            n_per_target=n_per_target,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            seed=seed + t_idx * 1000,
-            targets=[target],
-        )
-        if cache:
-            cache.store_mutants(
-                file_key, target.name, f_hash, [m.source for m in fresh]
+            fresh = [Mutant(target=target, source=src) for src in cached]
+        else:
+            fresh = generate_mutants(
+                llm,
+                original,
+                n_per_target=n_per_target,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                seed=seed + t_idx * 1000,
+                targets=[target],
             )
-        mutants.extend(fresh)
+            if cache:
+                cache.store_mutants(
+                    file_key, target.name, f_hash, [m.source for m in fresh]
+                )
+        # Drop LLM mutants that duplicate an operator mutant.
+        for m in fresh:
+            norm = _normalize(_dedent(m.source, target.indent))
+            if norm is not None and norm in seen_norms:
+                continue
+            if norm is not None:
+                seen_norms.add(norm)
+            mutants.append(m)
 
     report = Report(file=str(file))
     try:
