@@ -162,7 +162,9 @@ artifacts:
     - python/supermut/languages/treesitter.py
     - python/supermut/languages/python_lang.py
     - python/supermut/runners.py
+    - python/supermut/schemata.py
     - python/tests/test_runners.py
+    - python/tests/test_schemata.py
     - python/tests/test_languages.py
     - python/tests/test_dataset.py
     - python/tests/test_synthetic.py
