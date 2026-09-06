@@ -133,11 +133,8 @@ artifacts:
     container: ctr.supermut.app
     name: infer core component
     paths:
-    - src/
     - python/
     # covered_by_spec matches literal relative paths; list governed files explicitly
-    - src/lib.rs
-    - crates/
     - crates/core/src/lib.rs
     - crates/core/Cargo.toml
     - crates/py/src/lib.rs
