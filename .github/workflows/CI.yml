@@ -41,7 +41,7 @@ jobs:
         # Tests run against the INSTALLED wheel; running pytest from the
         # repo root would shadow it with the sourcetree (which has no .so).
         run: |
-          pip install -v . pytest
+          pip install -v "$GITHUB_WORKSPACE" pytest
           pytest "$GITHUB_WORKSPACE/python/tests" -q
         working-directory: ${{ runner.temp }}
 

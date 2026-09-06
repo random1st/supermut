@@ -135,6 +135,8 @@ artifacts:
     - python/supermut/harness.py
     - python/supermut/selection.py
     - python/supermut/cache.py
+    - python/supermut/dataset.py
+    - python/tests/test_dataset.py
     - python/tests/test_selection.py
     - python/supermut/__main__.py
     - python/tests/test_all.py
