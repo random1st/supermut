@@ -12,10 +12,8 @@ Safety gates before scoring (both borrowed from mutmut):
 
 from __future__ import annotations
 
+import hashlib
 import json
-import os
-import shlex
-import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -28,12 +26,11 @@ from supermut.mutate import (
     FunctionTarget,
     Mutant,
     _dedent,
-    _normalize,
     _reindent,
-    find_targets,
     generate_mutants,
 )
-from supermut.selection import SelectionMap, collect_selection
+from supermut.runners import Runner, runner_for
+from supermut.selection import SelectionMap
 
 if TYPE_CHECKING:
     from supermut.engine import LLM
@@ -133,12 +130,14 @@ class Report:
 
 
 def apply_mutant(module_source: str, mutant: Mutant) -> str:
-    """Replace the target's line span with the mutant source."""
+    """Replace the target's line span with the mutant source, restoring
+    any wrapper prefix (JS/TS ``export``) the bare mutant doesn't carry."""
     lines = module_source.split("\n")
     t = mutant.target
-    return "\n".join(
-        lines[: t.start_line - 1] + mutant.source.split("\n") + lines[t.end_line :]
-    )
+    repl = mutant.source.split("\n")
+    if t.prefix:
+        repl[0] = repl[0][: len(t.indent)] + t.prefix + repl[0][len(t.indent) :]
+    return "\n".join(lines[: t.start_line - 1] + repl + lines[t.end_line :])
 
 
 def _apply_many(module_source: str, mutants: list[Mutant]) -> str:
@@ -149,43 +148,46 @@ def _apply_many(module_source: str, mutants: list[Mutant]) -> str:
     return out
 
 
-def _canary_mutants(targets: list[FunctionTarget]) -> list[Mutant]:
+# The canary replaces every function body with an unconditional failure.
+# Python builds the body by indentation; brace languages splice the
+# statement after the first `{`. Expression-bodied functions (no `{`)
+# are skipped — enough canaries remain for the gate to mean something.
+_CANARY_STMT = {
+    "javascript": 'throw new Error("supermut canary");',
+    "typescript": 'throw new Error("supermut canary");',
+    "kotlin": 'throw RuntimeException("supermut canary")',
+    "swift": 'fatalError("supermut canary")',
+}
+
+
+def _canary_mutants(targets: list[FunctionTarget], language) -> list[Mutant]:
     canaries = []
     for t in targets:
-        header = _dedent(t.source, t.indent).split("\n")[0]
-        body = f'{header}\n    raise RuntimeError("supermut canary")'
-        indented = "\n".join(
-            t.indent + line if line.strip() else line for line in body.split("\n")
-        )
-        canaries.append(Mutant(target=t, source=indented))
+        dedented = _dedent(t.source, t.indent)
+        if language.name == "python":
+            header = dedented.split("\n")[0]
+            body = f'{header}\n    raise RuntimeError("supermut canary")'
+        else:
+            brace = dedented.find("{")
+            if brace == -1:
+                continue
+            stmt = _CANARY_STMT[language.name]
+            body = f"{dedented[: brace + 1]}\n    {stmt}\n}}"
+        canaries.append(Mutant(target=t, source=_reindent(body, t.indent)))
     return canaries
 
 
-def _run_pytest(
-    python: str,
-    pytest_args: list[str],
-    cwd: Path,
-    timeout_s: float,
-    keyword: str | None = None,
-) -> tuple[bool, bool]:
-    """Returns (passed, timed_out)."""
-    cmd = [python, "-m", "pytest", *pytest_args, "-x"]
-    if keyword:
-        cmd += ["-k", keyword]
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=cwd,
-            capture_output=True,
-            timeout=timeout_s,
-            # A mutant of identical size restored within the same mtime
-            # second would leave its stale .pyc looking valid — the clean
-            # run would then import the mutant. Never write bytecode.
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
-        return proc.returncode == 0, False
-    except subprocess.TimeoutExpired:
-        return False, True
+def _hash_fn_for(language):
+    """Cache key function: Python keeps the shipped AST hash (existing
+    caches stay valid); other languages hash the tree-sitter normal form."""
+    if language.name == "python":
+        return function_hash
+
+    def _hash(source: str) -> str:
+        norm = language.normalize(source) or source
+        return hashlib.sha256(norm.encode()).hexdigest()[:16]
+
+    return _hash
 
 
 def run(
@@ -195,6 +197,8 @@ def run(
     *,
     cwd: str | Path | None = None,
     python: str = sys.executable,
+    runner: Runner | None = None,
+    runner_cmd: str | None = None,
     n_per_target: int = 8,
     max_tokens: int = 192,
     temperature: float = 0.9,
@@ -205,30 +209,50 @@ def run(
     operator_mutants: int = 6,
     on_progress=None,
 ) -> Report:
-    """Full cycle for one module. ``tests`` is the pytest argument string
-    (e.g. ``"-q tests/"``). ``llm=None`` runs the operator arm alone.
+    """Full cycle for one module. ``tests`` is the runner argument string
+    (pytest args for Python, e.g. ``"-q tests/"``; extra CLI args for
+    vitest/jest). ``llm=None`` runs the operator arm alone (Python only).
     The target file is swapped in place with a guaranteed restore; run
     from a clean working tree.
     """
+    from supermut.languages import language_for_path
+
     file = Path(file).resolve()
     cwd = Path(cwd).resolve() if cwd else file.parent
-    pytest_args = shlex.split(tests)
     original = file.read_text()
-    targets = find_targets(original)
+    language = language_for_path(str(file))
+    if language is None:
+        raise ValueError(
+            f"no language frontend for {file.name} — install "
+            "supermut[languages] for JS/TS/Kotlin/Swift"
+        )
+    if llm is None and language.name != "python":
+        raise ValueError(
+            "the operator arm is Python-only; non-Python runs need a model"
+        )
+    targets = language.find_targets(original)
+    if runner is None:
+        runner = runner_for(
+            cwd, language.name, tests, python=python, command=runner_cmd
+        )
 
     # Gate 1 — instrumented baseline: suite must pass, and we get the
     # function->tests + test->duration maps in the same run.
-    selection: SelectionMap = collect_selection(
-        file, pytest_args, cwd, python=python, timeout_s=max(timeout_s * 5, 300.0),
-        targets=targets,
+    selection: SelectionMap = runner.baseline(
+        file, cwd, targets, max(timeout_s * 5, 300.0)
     )
 
-    # Gate 2 — canary: all targets raising at once must fail the suite.
+    # Gate 2 — canary: all covered targets failing at once must fail
+    # their tests.
     covered = [t for t in targets if selection.tests_by_function.get(t.name)]
-    if covered:
-        file.write_text(_apply_many(original, _canary_mutants(covered)))
+    canaries = _canary_mutants(covered, language)
+    if canaries:
+        canary_tests = sorted(
+            {test for t in covered for test in selection.tests_by_function[t.name]}
+        )
+        file.write_text(_apply_many(original, canaries))
         try:
-            passed, _ = _run_pytest(python, pytest_args, cwd, timeout_s)
+            passed, _ = runner.run(cwd, canary_tests, timeout_s)
         finally:
             file.write_text(original)
         if passed:
@@ -238,7 +262,8 @@ def run(
                 "verdicts would be meaningless"
             )
 
-    cache = FunctionCache(cwd / CACHE_NAME) if use_cache else None
+    hash_fn = _hash_fn_for(language)
+    cache = FunctionCache(cwd / CACHE_NAME, hash_fn=hash_fn) if use_cache else None
     file_key = str(file)
 
     # Generate (or recall) mutants per target. Hybrid by default: cheap
@@ -247,14 +272,16 @@ def run(
     mutants: list[Mutant] = []
     for t_idx, target in enumerate(targets):
         dedented = _dedent(target.source, target.indent)
-        f_hash = function_hash(dedented)
+        f_hash = hash_fn(dedented)
         seen_norms: set[str] = set()
 
-        if operators:
+        # The operator catalogue is ast-based; other languages run LLM-only
+        # until a tree-sitter operator arm exists.
+        if operators and language.name == "python":
             from supermut.synthetic import mutate_function
 
             for mutated, _op in mutate_function(dedented, max_mutants=operator_mutants):
-                norm = _normalize(mutated)
+                norm = language.normalize(mutated)
                 if norm is None or norm in seen_norms:
                     continue
                 seen_norms.add(norm)
@@ -280,6 +307,7 @@ def run(
                 temperature=temperature,
                 seed=seed + t_idx * 1000,
                 targets=[target],
+                language=language,
             )
             if cache:
                 cache.store_mutants(
@@ -287,7 +315,7 @@ def run(
                 )
         # Drop LLM mutants that duplicate an operator mutant.
         for m in fresh:
-            norm = _normalize(_dedent(m.source, target.indent))
+            norm = language.normalize(_dedent(m.source, target.indent))
             if norm is not None and norm in seen_norms:
                 continue
             if norm is not None:
@@ -298,7 +326,7 @@ def run(
     try:
         for i, mutant in enumerate(mutants):
             t = mutant.target
-            f_hash = function_hash(_dedent(t.source, t.indent))
+            f_hash = hash_fn(_dedent(t.source, t.indent))
             cached_verdict = (
                 cache.cached_verdict(file_key, t.name, f_hash, mutant.source)
                 if cache
@@ -320,13 +348,7 @@ def run(
             else:
                 file.write_text(apply_mutant(original, mutant))
                 t0 = time.time()
-                passed, timed_out = _run_pytest(
-                    python,
-                    pytest_args,
-                    cwd,
-                    timeout_s,
-                    keyword=SelectionMap.keyword_expr(tests_for_mutant),
-                )
+                passed, timed_out = runner.run(cwd, tests_for_mutant, timeout_s)
                 duration = time.time() - t0
                 file.write_text(original)
                 if timed_out:

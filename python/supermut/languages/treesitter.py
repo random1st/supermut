@@ -49,10 +49,23 @@ class TreeSitterLanguage:
                 if is_func and not inside_function:
                     name_node = child.child_by_field_name("name")
                     if name_node is not None:
-                        start_line = child.start_point[0] + 1
-                        end_line = child.end_point[0] + 1
+                        # An `export`(-default) wrapper shares the function's
+                        # lines; the span must cover it and apply_mutant must
+                        # put it back, or every mutant of an exported function
+                        # silently breaks the module's imports.
+                        prefix = ""
+                        span = child
+                        if node.type == "export_statement":
+                            prefix = src_bytes[
+                                node.start_byte : child.start_byte
+                            ].decode()
+                            span = node
+                        if "\n" in prefix:
+                            continue  # multi-line wrapper: skip, stay exact
+                        start_line = span.start_point[0] + 1
+                        end_line = max(span.end_point[0], child.end_point[0]) + 1
                         seg = src_bytes[child.start_byte : child.end_byte].decode()
-                        indent = " " * child.start_point[1]
+                        indent = " " * span.start_point[1]
                         # keep the original indentation on the first line too,
                         # matching the Python frontend's padded segments
                         targets.append(
@@ -62,6 +75,7 @@ class TreeSitterLanguage:
                                 start_line=start_line,
                                 end_line=end_line,
                                 indent=indent,
+                                prefix=prefix,
                             )
                         )
                 visit(child, inside_function or is_func)

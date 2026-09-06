@@ -42,6 +42,7 @@ def register(lang: Language) -> Language:
 
 
 def language_for_path(path: str) -> Language | None:
+    _ensure_loaded()
     for lang in registry.values():
         if any(path.endswith(ext) for ext in lang.extensions):
             return lang

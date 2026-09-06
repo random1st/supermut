@@ -29,10 +29,6 @@ FIX_PATTERN = (
     r"(^|[^[:alpha:]])(fix(es|ed)?|bug|bugfix|hotfix|regression"
     r"|incorrect|wrong|off.by.one)([^[:alpha:]]|$)"
 )
-_MUTANT_HEADER = (
-    "# Buggy mutant of the function above. Same signature, one subtle\n"
-    "# logic change (operator, comparison, boundary, or constant):\n"
-)
 
 
 @dataclass
@@ -271,16 +267,14 @@ def to_prompt_completion(sample: Sample) -> dict[str, str]:
     model sees `#` for Python and `//` for JS/TS/Kotlin/Swift.
     """
     from supermut.languages import language_by_name
+    from supermut.mutate import _mutant_header
 
     cp = language_by_name(sample.language).comment_prefix
     header = sample.buggy_source.split("\n")[0]
-    mutant_header = "\n".join(
-        cp + line.lstrip("#") for line in _MUTANT_HEADER.rstrip().split("\n")
-    )
     prompt = (
         f"{cp} Original function:\n"
         f"{sample.fixed_source}\n\n"
-        f"{mutant_header}\n"
+        f"{_mutant_header(cp)}"
         f"{header}\n"
     )
     completion = "\n".join(sample.buggy_source.split("\n")[1:])

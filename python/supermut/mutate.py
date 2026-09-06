@@ -18,10 +18,14 @@ class FunctionTarget:
     """One function eligible for mutation."""
 
     name: str
-    source: str  # exact segment, original indentation
+    source: str  # exact segment, original indentation, wrapper-free
     start_line: int  # 1-based, inclusive (includes decorators)
     end_line: int  # 1-based, inclusive
     indent: str
+    # First-line text between the indent and the function itself that the
+    # span replacement must preserve (JS/TS `export ` / `export default `).
+    # The prompt, validation, and mutants all see the bare function.
+    prefix: str = ""
 
 
 @dataclass
@@ -68,31 +72,85 @@ def find_targets(module_source: str) -> list[FunctionTarget]:
     return targets
 
 
+# Single source of the prompt scaffolding text. dataset.to_prompt_completion
+# renders training pairs from the same strings — train == serve, per language.
+_MUTANT_HEADER = (
+    "# Buggy mutant of the function above. Same signature, one subtle\n"
+    "# logic change (operator, comparison, boundary, or constant):\n"
+)
+
+
+def _mutant_header(comment_prefix: str) -> str:
+    return (
+        "\n".join(
+            comment_prefix + line.lstrip("#")
+            for line in _MUTANT_HEADER.rstrip().split("\n")
+        )
+        + "\n"
+    )
+
+
+def _few_shot_block(comment_prefix: str, original: str, mutant: str) -> str:
+    return (
+        f"{comment_prefix} Original function:\n"
+        f"{original}\n\n"
+        f"{_mutant_header(comment_prefix)}"
+        f"{mutant}\n\n"
+    )
+
+
 # One worked example teaches base models to vary instead of copying; a
 # fine-tuned mutant model sees the exact same format it was trained on.
-_FEW_SHOT = """\
-# Original function:
-def is_positive(x):
-    return x > 0
+_FEW_SHOTS = {
+    "python": _few_shot_block(
+        "#",
+        "def is_positive(x):\n    return x > 0",
+        "def is_positive(x):\n    return x >= 0",
+    ),
+    "javascript": _few_shot_block(
+        "//",
+        "function isPositive(x) {\n    return x > 0;\n}",
+        "function isPositive(x) {\n    return x >= 0;\n}",
+    ),
+    "kotlin": _few_shot_block(
+        "//",
+        "fun isPositive(x: Int): Boolean {\n    return x > 0\n}",
+        "fun isPositive(x: Int): Boolean {\n    return x >= 0\n}",
+    ),
+    "swift": _few_shot_block(
+        "//",
+        "func isPositive(_ x: Int) -> Bool {\n    return x > 0\n}",
+        "func isPositive(_ x: Int) -> Bool {\n    return x >= 0\n}",
+    ),
+}
+_FEW_SHOTS["typescript"] = _FEW_SHOTS["javascript"]
 
-# Buggy mutant of the function above. Same signature, one subtle
-# logic change (operator, comparison, boundary, or constant):
-def is_positive(x):
-    return x >= 0
+# Generation stop sequences: a new comment block or a new top-level
+# definition means the model has moved past the mutant body.
+_STOP_SEQS = {
+    "python": ["\n# ", "\ndef ", "\nclass ", "\nif __name__"],
+    "javascript": ["\n// ", "\nfunction ", "\nclass ", "\nconst ", "\nexport "],
+    "kotlin": ["\n// ", "\nfun ", "\nclass ", "\nobject "],
+    "swift": ["\n// ", "\nfunc ", "\nclass ", "\nstruct ", "\nextension "],
+}
+_STOP_SEQS["typescript"] = _STOP_SEQS["javascript"]
 
-"""
 
+def build_prompt(target: FunctionTarget, language=None) -> str:
+    """Prompt prefix shared by every mutant of this target (KV-cache friendly).
 
-def build_prompt(target: FunctionTarget) -> str:
-    """Prompt prefix shared by every mutant of this target (KV-cache friendly)."""
+    ``language=None`` means Python. The output for Python is byte-identical
+    to what the v2 model was fine-tuned on — do not reformat.
+    """
+    name = getattr(language, "name", "python")
+    cp = "#" if language is None else language.comment_prefix
     func = _dedent(target.source, target.indent)
     header = func.split("\n")[0]
     return (
-        f"{_FEW_SHOT}"
-        "# Original function:\n"
+        f"{_FEW_SHOTS[name]}"
+        f"{cp} Original function:\n"
         f"{func}\n\n"
-        "# Buggy mutant of the function above. Same signature, one subtle\n"
-        "# logic change (operator, comparison, boundary, or constant):\n"
+        f"{_mutant_header(cp)}"
         f"{header}\n"
     )
 
@@ -106,13 +164,25 @@ def generate_mutants(
     temperature: float = 0.9,
     seed: int = 42,
     targets: list[FunctionTarget] | None = None,
+    language=None,
 ) -> list[Mutant]:
-    """Generate, validate, and dedupe mutants for every target in the module."""
+    """Generate, validate, and dedupe mutants for every target in the module.
+
+    ``language=None`` keeps the shipped Python path (ast trim + validate);
+    passing a Language frontend routes trimming, validation, and dedupe
+    through it instead.
+    """
+    lang_name = getattr(language, "name", "python")
     if targets is None:
-        targets = find_targets(module_source)
+        targets = (
+            find_targets(module_source)
+            if language is None
+            else language.find_targets(module_source)
+        )
+    normalize = _normalize if lang_name == "python" else language.normalize
     mutants: list[Mutant] = []
     for t_idx, target in enumerate(targets):
-        prompt = build_prompt(target)
+        prompt = build_prompt(target, language)
         header = _dedent(target.source, target.indent).split("\n")[0]
         completions = llm.generate_batch(
             prompt,
@@ -120,20 +190,26 @@ def generate_mutants(
             max_tokens=max_tokens,
             temperature=temperature,
             seed=seed + t_idx * 1000,
-            stop=["\n# ", "\ndef ", "\nclass ", "\nif __name__"],
+            stop=_STOP_SEQS[lang_name],
         )
         seen: set[str] = set()
-        original_norm = _normalize(_dedent(target.source, target.indent))
+        original_norm = normalize(_dedent(target.source, target.indent))
         if original_norm is not None:
             seen.add(original_norm)
         for body in completions:
-            candidate = _trim_to_function(header + "\n" + body.rstrip())
+            raw = header + "\n" + body.rstrip()
+            if lang_name == "python":
+                candidate = _trim_to_function(raw)
+                if candidate is not None and not _is_single_function(
+                    candidate, target.name
+                ):
+                    candidate = None
+            else:
+                candidate = _trim_to_valid(raw, target.name, language)
             if candidate is None:
                 continue
-            norm = _normalize(candidate)
+            norm = normalize(candidate)
             if norm is None or norm in seen:
-                continue
-            if not _is_single_function(candidate, target.name):
                 continue
             seen.add(norm)
             mutants.append(
@@ -169,6 +245,19 @@ def _trim_to_function(candidate: str) -> str | None:
             return text
         except SyntaxError:
             lines.pop()
+    return None
+
+
+def _trim_to_valid(candidate: str, name: str, language) -> str | None:
+    """Language-frontend trim: pop trailing lines until the candidate is
+    exactly one function named ``name``; None if it never is."""
+    lines = candidate.split("\n")
+    min_len = max(2, len(lines) // 3)
+    while len(lines) >= min_len:
+        text = "\n".join(lines)
+        if language.validate(text, name):
+            return text
+        lines.pop()
     return None
 
 

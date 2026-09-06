@@ -13,9 +13,17 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="supermut", description="LLM-driven mutation testing"
     )
-    parser.add_argument("file", help="Python module to mutate")
+    parser.add_argument("file", help="source file to mutate (.py/.js/.ts/...)")
     parser.add_argument(
-        "--tests", required=True, help='pytest arguments, e.g. "-q tests/"'
+        "--tests",
+        default="",
+        help='runner arguments: pytest args for Python (e.g. "-q tests/"), '
+        "extra CLI args for vitest/jest",
+    )
+    parser.add_argument(
+        "--runner-cmd",
+        help='override the runner executable, e.g. "bunx vitest" '
+        "(default: npx <runner> for JS/TS)",
     )
     parser.add_argument(
         "--python", default=sys.executable, help="interpreter to run tests with"
@@ -53,21 +61,28 @@ def main(argv: list[str] | None = None) -> int:
     def progress(done: int, total: int, status) -> None:
         print(f"[{done}/{total}] {status.value}", flush=True)
 
-    report = run(
-        args.file,
-        args.tests,
-        llm,
-        cwd=args.cwd,
-        python=args.python,
-        n_per_target=args.n_per_target,
-        max_tokens=args.max_tokens,
-        temperature=args.temperature,
-        seed=args.seed,
-        timeout_s=args.timeout,
-        use_cache=not args.no_cache,
-        operators=not args.llm_only,
-        on_progress=progress,
-    )
+    try:
+        report = run(
+            args.file,
+            args.tests,
+            llm,
+            cwd=args.cwd,
+            python=args.python,
+            runner_cmd=args.runner_cmd,
+            n_per_target=args.n_per_target,
+            max_tokens=args.max_tokens,
+            temperature=args.temperature,
+            seed=args.seed,
+            timeout_s=args.timeout,
+            use_cache=not args.no_cache,
+            operators=not args.llm_only,
+            on_progress=progress,
+        )
+    except (ValueError, RuntimeError) as e:
+        # Designed user-facing failures (unsupported language, failing
+        # baseline, canary gate) — no traceback noise.
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     print()
     print(report.summary())
     if args.json_out:

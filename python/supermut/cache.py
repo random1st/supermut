@@ -40,9 +40,14 @@ class _Entry:
 
 
 class FunctionCache:
-    """JSON sidecar: {file: {func_name: {hash, mutants, verdicts}}}."""
+    """JSON sidecar: {file: {func_name: {hash, mutants, verdicts}}}.
 
-    def __init__(self, path: Path):
+    ``hash_fn`` keys mutant verdicts; the default is the Python AST hash.
+    Non-Python languages pass their own (e.g. tree-sitter normalize).
+    """
+
+    def __init__(self, path: Path, hash_fn=function_hash):
+        self._hash_fn = hash_fn
         self._path = path
         self._data: dict[str, dict[str, _Entry]] = {}
         if path.exists():
@@ -91,7 +96,7 @@ class FunctionCache:
         self, file_key: str, func_name: str, func_hash: str, mutant_source: str
     ) -> str | None:
         entry = self._entry(file_key, func_name, func_hash)
-        return entry.verdicts.get(function_hash(mutant_source))
+        return entry.verdicts.get(self._hash_fn(mutant_source))
 
     def store_verdict(
         self,
@@ -102,4 +107,4 @@ class FunctionCache:
         verdict: str,
     ) -> None:
         entry = self._entry(file_key, func_name, func_hash)
-        entry.verdicts[function_hash(mutant_source)] = verdict
+        entry.verdicts[self._hash_fn(mutant_source)] = verdict
