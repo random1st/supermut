@@ -1,4 +1,4 @@
-revision: 65
+revision: 66
 spec_ref: infer-core__20260906.s5d.yaml
 spec_sha256: sha256:1d5f7d299627c0a77f6fb5051327c101fb5cb1754d6f660bf1e32f749a7e62fa
 status: approved
@@ -1333,6 +1333,54 @@ gate_results:
   command:
   - /Users/random1st/src/supermut/.s5d/harness/typecheck.sh
   duration_ms: 210
+  waiver_expires_at: null
+  kind_class: acceptance
+- kind: schema
+  status: passed
+  spec_sha256: sha256:1d5f7d299627c0a77f6fb5051327c101fb5cb1754d6f660bf1e32f749a7e62fa
+  subject_kind: governed_components
+  subject_sha256: sha256:54850692d58b6f07368fc97bfb1de759b991830cd1088936c56b8881fcafddf3
+  attempt: 25
+  timestamp: 2026-09-06T19:48:08.738040+00:00
+  log: schema validation passed (built-in)
+  exit_code: null
+  evidence_path: evidence/infer-core/schema_25.log
+  command: null
+  duration_ms: 9
+  waiver_expires_at: null
+  kind_class: eligibility
+- kind: graph
+  status: passed
+  spec_sha256: sha256:1d5f7d299627c0a77f6fb5051327c101fb5cb1754d6f660bf1e32f749a7e62fa
+  subject_kind: governed_components
+  subject_sha256: sha256:54850692d58b6f07368fc97bfb1de759b991830cd1088936c56b8881fcafddf3
+  attempt: 25
+  timestamp: 2026-09-06T19:48:08.747096+00:00
+  log: graph check passed (built-in)
+  exit_code: null
+  evidence_path: evidence/infer-core/graph_25.log
+  command: null
+  duration_ms: 8
+  waiver_expires_at: null
+  kind_class: eligibility
+- kind: typecheck
+  status: passed
+  spec_sha256: sha256:1d5f7d299627c0a77f6fb5051327c101fb5cb1754d6f660bf1e32f749a7e62fa
+  subject_kind: governed_components
+  subject_sha256: sha256:54850692d58b6f07368fc97bfb1de759b991830cd1088936c56b8881fcafddf3
+  attempt: 25
+  timestamp: 2026-09-06T19:48:08.861068+00:00
+  log: |
+    exit: exit status: 0
+    stdout:
+
+    stderr:
+        Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.06s
+  exit_code: 0
+  evidence_path: evidence/infer-core/typecheck_25.log
+  command:
+  - /Users/random1st/src/supermut/.s5d/harness/typecheck.sh
+  duration_ms: 105
   waiver_expires_at: null
   kind_class: acceptance
 decision: null

@@ -3,6 +3,7 @@ smoke tests (swiftc -typecheck / kotlinc) and a runtime switch check —
 tree-sitter parsing alone is not a typecheck.
 """
 
+import os
 import shutil
 import subprocess
 import textwrap
@@ -318,6 +319,121 @@ def test_swift_compile_error_recovery(tmp_path):
         timeout_s=240,
     )
     assert calc.read_text() == SPM_CALC
+    by_status = {r.status for r in report.results}
+    assert by_status == {MutantStatus.COMPILE_ERROR, MutantStatus.KILLED}
+
+
+# Captured from build/test-results/test/TEST-demo.CalcTests.xml
+# (Gradle 9.5.1, kotlin("jvm") 2.3.20, JUnit platform).
+JUNIT_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="demo.CalcTests" tests="1" skipped="0" failures="0" errors="0" \
+timestamp="2026-09-06T19:42:42.432Z" hostname="M3MAX.local" time="0.017">
+  <properties/>
+  <testcase name="testAdd()" classname="demo.CalcTests" time="0.011"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
+"""
+
+
+def test_parse_junit_xml():
+    from supermut.runners import _parse_junit_xml
+
+    # the "()" display-name suffix is stripped to match --tests format
+    assert _parse_junit_xml(JUNIT_XML) == {
+        "demo.CalcTests.testAdd": pytest.approx(0.011)
+    }
+
+
+needs_gradle = pytest.mark.skipif(
+    not (os.environ.get("SUPERMUT_TEST_GRADLE") and shutil.which("gradle")),
+    reason="set SUPERMUT_TEST_GRADLE=1 (needs gradle + a JDK; first run "
+    "downloads the kotlin plugin)",
+)
+
+GRADLE_CALC = textwrap.dedent(
+    """\
+    package demo
+
+    fun add(a: Int, b: Int): Int {
+        return a + b
+    }
+    """
+)
+
+
+def _make_gradle_project(tmp_path):
+    (tmp_path / "src" / "main" / "kotlin").mkdir(parents=True)
+    (tmp_path / "src" / "test" / "kotlin").mkdir(parents=True)
+    (tmp_path / "settings.gradle.kts").write_text('rootProject.name = "demo"\n')
+    (tmp_path / "build.gradle.kts").write_text(
+        textwrap.dedent(
+            """\
+            plugins {
+                kotlin("jvm") version "2.3.20"
+            }
+
+            repositories {
+                mavenCentral()
+            }
+
+            dependencies {
+                testImplementation(kotlin("test"))
+            }
+
+            tasks.test {
+                useJUnitPlatform()
+            }
+
+            kotlin {
+                compilerOptions {
+                    jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
+                }
+            }
+
+            java {
+                sourceCompatibility = JavaVersion.VERSION_17
+                targetCompatibility = JavaVersion.VERSION_17
+            }
+            """
+        )
+    )
+    calc = tmp_path / "src" / "main" / "kotlin" / "Calc.kt"
+    calc.write_text(GRADLE_CALC)
+    (tmp_path / "src" / "test" / "kotlin" / "CalcTests.kt").write_text(
+        textwrap.dedent(
+            """\
+            package demo
+
+            import kotlin.test.Test
+            import kotlin.test.assertEquals
+
+            class CalcTests {
+                @Test
+                fun testAdd() {
+                    assertEquals(5, add(2, 3))
+                }
+            }
+            """
+        )
+    )
+    return calc
+
+
+@needs_gradle
+def test_kotlin_full_cycle_with_recovery(tmp_path):
+    from supermut.harness import MutantStatus, run
+
+    calc = _make_gradle_project(tmp_path)
+    # one type-broken mutant (recovery path) + one real mutant (killed)
+    llm = _StubLLM(['    return "oops"\n}', "    return a - b\n}"])
+    report = run(
+        calc, "", llm, cwd=tmp_path, n_per_target=2, use_cache=False,
+        timeout_s=300,
+    )
+    assert calc.read_text() == GRADLE_CALC
+    assert not (tmp_path / "src" / "main" / "kotlin" / "__supermut_helper.kt").exists()
+    assert not (tmp_path / ".supermut-init.gradle").exists()
     by_status = {r.status for r in report.results}
     assert by_status == {MutantStatus.COMPILE_ERROR, MutantStatus.KILLED}
 

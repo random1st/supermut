@@ -381,10 +381,12 @@ class SchemataBuildError(RuntimeError):
 def failed_ids(schemata_source: str, diagnostics: str, file_name: str) -> set[int]:
     """Mutant ids whose fenced variant block owns a compile error.
 
-    Both swiftc and kotlinc emit ``path/file:line:col: error: …``; any
-    error line falling inside a ``__supermut_begin/end`` fence names its
-    mutant. Errors outside every fence return an empty set — the caller
-    must surface those instead of dropping mutants blindly.
+    Compiler CLIs emit ``path/file:line:col: error: …``; the Gradle
+    Kotlin plugin emits ``e: file:///path/file:line:col message`` — both
+    captured live 2026-09-06. Any error line falling inside a
+    ``__supermut_begin/end`` fence names its mutant. Errors outside
+    every fence return an empty set — the caller must surface those
+    instead of dropping mutants blindly.
     """
     enclosing: dict[int, int] = {}
     current: int | None = None
@@ -396,12 +398,15 @@ def failed_ids(schemata_source: str, diagnostics: str, file_name: str) -> set[in
             enclosing[lineno] = current
         if s.startswith("// __supermut_end_"):
             current = None
-    pattern = re.compile(re.escape(file_name) + r":(\d+)(?::\d+)?: *error")
-    return {
-        enclosing[int(m.group(1))]
-        for m in pattern.finditer(diagnostics)
-        if int(m.group(1)) in enclosing
-    }
+    pattern = re.compile(re.escape(file_name) + r":(\d+)(?::\d+)?")
+    bad: set[int] = set()
+    for line in diagnostics.split("\n"):
+        if not (line.lstrip().startswith("e:") or "error" in line):
+            continue
+        for m in pattern.finditer(line):
+            if int(m.group(1)) in enclosing:
+                bad.add(enclosing[int(m.group(1))])
+    return bad
 
 
 def _helper_source(module_source: str, language) -> str:

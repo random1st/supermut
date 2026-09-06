@@ -34,6 +34,7 @@ __all__ = [
     "VitestRunner",
     "JestRunner",
     "SwiftTestRunner",
+    "GradleRunner",
     "runner_for",
 ]
 
@@ -344,6 +345,148 @@ class SwiftTestRunner:
             helper.unlink()
 
 
+_GRADLE_INIT = """\
+allprojects {
+    tasks.withType(Test).configureEach {
+        environment("SUPERMUT_MUTANT", System.getenv("SUPERMUT_MUTANT") ?: "0")
+        outputs.upToDateWhen { false }
+    }
+}
+"""
+
+
+@dataclass
+class GradleRunner:
+    """Gradle/JUnit: the Kotlin schemata cycle.
+
+    An injected init script (-I) forwards SUPERMUT_MUTANT into every
+    Test task and disables UP-TO-DATE — without it, a run where only
+    the env var changed is skipped as up-to-date and the previous
+    verdict silently replays (verified empirically against the daemon:
+    pass/fail/pass on env flips). Selection is module-granular, like
+    the other compiled/node runners. Single-module layout assumed
+    (results read from build/test-results); pass extra args for more.
+    """
+
+    args: list[str] = field(default_factory=list)
+    command: tuple[str, ...] = ("gradle",)
+    name: str = "gradle"
+    schemata: bool = True
+    _script: Path | None = field(default=None, init=False, repr=False)
+
+    def _init_script(self, cwd: Path) -> Path:
+        script = cwd / ".supermut-init.gradle"
+        if not script.exists():
+            script.write_text(_GRADLE_INIT)
+        self._script = script
+        return script
+
+    def baseline(
+        self,
+        file: Path,
+        cwd: Path,
+        targets: list[FunctionTarget],
+        timeout_s: float,
+    ) -> SelectionMap:
+        import shutil as _shutil
+
+        results = cwd / "build" / "test-results"
+        _shutil.rmtree(results, ignore_errors=True)  # never parse stale XMLs
+        proc = subprocess.run(
+            [
+                *self.command,
+                "test",
+                "-I",
+                str(self._init_script(cwd)),
+                *self.args,
+            ],
+            cwd=cwd,
+            capture_output=True,
+            timeout=timeout_s,
+        )
+        reports = sorted(results.rglob("TEST-*.xml")) if results.exists() else []
+        if proc.returncode != 0 or not reports:
+            raise RuntimeError(
+                "instrumented baseline run failed:\n"
+                + (proc.stderr or proc.stdout).decode(errors="replace")[-2000:]
+            )
+        durations: dict[str, float] = {}
+        for report in reports:
+            durations.update(_parse_junit_xml(report.read_text()))
+        selection = SelectionMap(duration_by_test=durations)
+        for t in targets:
+            selection.tests_by_function[t.name] = set(durations)
+        return selection
+
+    def prepare(self, file: Path, cwd: Path, schemata, timeout_s: float) -> None:
+        from supermut.schemata import SchemataBuildError
+
+        file.write_text(schemata.source)
+        (file.parent / schemata.helper_filename).write_text(schemata.helper_source)
+        proc = subprocess.run(
+            [*self.command, "testClasses", "-I", str(self._init_script(cwd)), *self.args],
+            cwd=cwd,
+            capture_output=True,
+            timeout=timeout_s,
+        )
+        if proc.returncode != 0:
+            raise SchemataBuildError(
+                (proc.stderr + b"\n" + proc.stdout).decode(errors="replace")
+            )
+
+    def run(
+        self,
+        cwd: Path,
+        tests: list[str] | None,
+        timeout_s: float,
+        mutant_id: int | None = None,
+    ) -> tuple[bool, bool]:
+        cmd = [*self.command, "test", "-I", str(self._init_script(cwd))]
+        for t in tests or []:
+            cmd += ["--tests", t]
+        env = dict(os.environ)
+        if mutant_id is not None:
+            env["SUPERMUT_MUTANT"] = str(mutant_id)
+        else:
+            env.pop("SUPERMUT_MUTANT", None)
+        try:
+            proc = subprocess.run(
+                cmd + self.args,
+                cwd=cwd,
+                capture_output=True,
+                timeout=timeout_s,
+                env=env,
+            )
+            return proc.returncode == 0, False
+        except subprocess.TimeoutExpired:
+            return False, True
+
+    def cleanup(self, file: Path, original: str, schemata) -> None:
+        file.write_text(original)
+        for leftover in (file.parent / schemata.helper_filename, self._script):
+            if leftover is not None and leftover.exists():
+                leftover.unlink()
+
+
+def _parse_junit_xml(xml_text: str) -> dict[str, float]:
+    """JUnit report -> {"pkg.Class.method": seconds} in --tests format.
+
+    Kotlin/JUnit5 display names carry a "()" suffix (and parameterized
+    variants carry argument lists); everything from "(" on is stripped
+    so the id matches Gradle's --tests filter.
+    """
+    import xml.etree.ElementTree as ET
+
+    durations: dict[str, float] = {}
+    for case in ET.fromstring(xml_text).iter("testcase"):
+        method = (case.get("name") or "").split("(")[0]
+        test_id = f"{case.get('classname')}.{method}"
+        durations[test_id] = max(
+            durations.get(test_id, 0.0), float(case.get("time") or 0.0)
+        )
+    return durations
+
+
 def _parse_xunit(xml_text: str) -> dict[str, float]:
     """test id (``Target.Class/method``, the --filter format) -> seconds."""
     import xml.etree.ElementTree as ET
@@ -388,10 +531,22 @@ def runner_for(
         cmd = tuple(shlex.split(command)) if command else ("swift",)
         return SwiftTestRunner(args=args, command=cmd)
     if language_name == "kotlin":
-        raise RuntimeError(
-            "kotlin test-runner integration is not wired yet (schemata "
-            "assembly exists; gradle runner is next)"
-        )
+        if not any(
+            (cwd / f).exists()
+            for f in ("build.gradle", "build.gradle.kts", "settings.gradle",
+                      "settings.gradle.kts")
+        ):
+            raise RuntimeError(
+                f"no Gradle build in {cwd}: Kotlin runs need a Gradle project "
+                "(pass cwd= / --cwd pointing at the project root)"
+            )
+        if command:
+            cmd = tuple(shlex.split(command))
+        elif (cwd / "gradlew").exists():
+            cmd = (str(cwd / "gradlew"),)
+        else:
+            cmd = ("gradle",)
+        return GradleRunner(args=args, command=cmd)
 
     pkg = _package_json(cwd)
     deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
