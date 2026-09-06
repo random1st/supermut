@@ -13,7 +13,7 @@ from supermut.mutate import (
     build_prompt,
     find_targets,
 )
-from .test_all import MODEL, needs_model
+from test_all import MODEL, needs_model
 
 CALC = textwrap.dedent(
     '''
@@ -159,9 +159,10 @@ def test_full_cycle(tmp_path):
     llm = supermut.LLM(MODEL, n_ctx=2048)
     report = run(
         target,
-        f"{sys.executable} -m pytest -x -q test_calc.py",
+        "-x -q test_calc.py",
         llm,
         cwd=tmp_path,
+        python=sys.executable,
         n_per_target=4,
         max_tokens=96,
         seed=3,
@@ -170,13 +171,13 @@ def test_full_cycle(tmp_path):
     # File restored byte-for-byte no matter what the mutants did.
     assert target.read_text() == CALC
     # Every result is a real verdict and the counts add up.
-    assert all(
-        r.status in (MutantStatus.KILLED, MutantStatus.SURVIVED, MutantStatus.TIMEOUT)
-        for r in report.results
-    )
-    assert report.killed + report.survived == len(report.results) or any(
-        r.status is MutantStatus.TIMEOUT for r in report.results
-    )
+    assert all(isinstance(r.status, MutantStatus) for r in report.results)
+    assert report.killed + report.survived + report.no_tests == len(report.results)
+    # Box methods are not exercised by the fixture tests -> NO_TESTS,
+    # never conflated with survivors.
+    for r in report.results:
+        if r.mutant.target.name in ("__init__", "fits"):
+            assert r.status is MutantStatus.NO_TESTS
     assert "kill rate" in report.summary()
 
 
@@ -193,8 +194,9 @@ def test_baseline_failure_raises(tmp_path):
     with pytest.raises(RuntimeError, match="baseline"):
         run(
             target,
-            f"{sys.executable} -m pytest -x -q test_calc.py",
+            "-x -q test_calc.py",
             llm,
             cwd=tmp_path,
+            python=sys.executable,
             n_per_target=1,
         )

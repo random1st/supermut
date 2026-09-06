@@ -38,9 +38,12 @@ jobs:
       - name: Build and test
         # pip drives maturin as the build backend — no virtualenv needed,
         # unlike `maturin develop` which refuses to run without one.
+        # Tests run against the INSTALLED wheel; running pytest from the
+        # repo root would shadow it with the sourcetree (which has no .so).
         run: |
           pip install -v . pytest
-          pytest python/tests -q
+          pytest "$GITHUB_WORKSPACE/python/tests" -q
+        working-directory: ${{ runner.temp }}
 
   linux:
     # x86_64 only for now: cross-building the llama.cpp C++ core for aarch64
@@ -57,7 +60,9 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: x86_64
-          args: --release --out dist --find-interpreter
+          # static-stdcxx: AlmaLinux 8's GLIBCXX_3.4.25 fails the 2_28
+          # symbol audit unless libstdc++ is linked statically.
+          args: --release --out dist --find-interpreter --features static-stdcxx
           sccache: ${{ !startsWith(github.ref, 'refs/tags/') }}
           manylinux: 2_28
           before-script-linux: |

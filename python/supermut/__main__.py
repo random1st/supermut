@@ -15,7 +15,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("file", help="Python module to mutate")
     parser.add_argument(
-        "--tests", required=True, help='test command, e.g. "pytest -x -q tests/"'
+        "--tests", required=True, help='pytest arguments, e.g. "-q tests/"'
+    )
+    parser.add_argument(
+        "--python", default=sys.executable, help="interpreter to run tests with"
+    )
+    parser.add_argument("--json", dest="json_out", help="write report JSON here")
+    parser.add_argument(
+        "--no-cache", action="store_true", help="ignore .supermut-cache.json"
     )
     parser.add_argument(
         "--model", required=True, help="GGUF path or HF repo id"
@@ -40,15 +47,21 @@ def main(argv: list[str] | None = None) -> int:
         args.tests,
         llm,
         cwd=args.cwd,
+        python=args.python,
         n_per_target=args.n_per_target,
         max_tokens=args.max_tokens,
         temperature=args.temperature,
         seed=args.seed,
         timeout_s=args.timeout,
+        use_cache=not args.no_cache,
         on_progress=progress,
     )
     print()
     print(report.summary())
+    if args.json_out:
+        from pathlib import Path
+
+        Path(args.json_out).write_text(report.to_json())
     return 0
 
 
