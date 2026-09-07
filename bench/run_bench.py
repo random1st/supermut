@@ -125,7 +125,15 @@ def run_supermut(
     proc = subprocess.run(args, capture_output=True, text=True, timeout=1800)
     elapsed = time.time() - t0
     if proc.returncode != 0:
-        return {"tool": label, "error": proc.stdout[-500:] + proc.stderr[-500:]}
+        # llama.cpp logs drown the real message in a raw tail; keep the last
+        # lines that aren't engine noise (traceback or designed failure).
+        noise = ("llama", "ggml", "sched", "graph", "print_info", "load", "resolve_fused")
+        lines = [
+            ln
+            for ln in (proc.stdout + proc.stderr).splitlines()
+            if ln.strip() and not ln.lstrip().startswith(noise)
+        ]
+        return {"tool": label, "error": " | ".join(lines[-6:])}
     report = json.loads((bed / "report.json").read_text())
     survivors_by_func = {
         m["target"] for m in report["mutants"] if m["status"] == "survived"
