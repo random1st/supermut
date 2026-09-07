@@ -163,6 +163,8 @@ artifacts:
     - python/supermut/languages/python_lang.py
     - python/supermut/runners.py
     - python/supermut/schemata.py
+    - python/supermut/export.py
+    - python/tests/test_export.py
     - python/tests/test_runners.py
     - python/tests/test_schemata.py
     - python/tests/test_languages.py
