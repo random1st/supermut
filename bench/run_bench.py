@@ -89,7 +89,11 @@ def run_mutmut(bed: Path) -> dict:
     }
 
 
-def run_supermut(bed: Path, model: str, label: str, n: int, seed: int) -> dict:
+def run_supermut(
+    bed: Path, model: str, label: str, n: int, seed: int, sampling: list[str]
+) -> dict:
+    # `sampling` is passed through verbatim (e.g. ["--temperature", "1.2"]);
+    # with none given the bench measures the CLI's own defaults.
     args = [
         sys.executable,
         "-m",
@@ -107,8 +111,7 @@ def run_supermut(bed: Path, model: str, label: str, n: int, seed: int) -> dict:
         "2048",
         "--seed",
         str(seed),
-        "--temperature",
-        "0.9",
+        *sampling,
         "--no-cache",
         "--json",
         str(bed / "report.json"),
@@ -148,17 +151,31 @@ def main() -> int:
         help="GGUF path or 'hf-repo:filename'; repeatable",
     )
     parser.add_argument("--label", action="append", default=[])
-    parser.add_argument("-n", type=int, default=8)
+    parser.add_argument("-n", type=int, default=16)
     parser.add_argument("--seed", type=int, default=11)
     parser.add_argument("--skip-mutmut", action="store_true")
+    # Sampling overrides; unset = the supermut CLI's own defaults.
+    parser.add_argument("--temperature", type=float)
+    parser.add_argument("--top-p", type=float)
+    parser.add_argument("--min-p", type=float)
     args = parser.parse_args()
+    sampling: list[str] = []
+    for flag, val in (
+        ("--temperature", args.temperature),
+        ("--top-p", args.top_p),
+        ("--min-p", args.min_p),
+    ):
+        if val is not None:
+            sampling += [flag, str(val)]
 
     rows = []
     if not args.skip_mutmut:
         rows.append(run_mutmut(make_bed()))
     for i, model in enumerate(args.model):
         label = args.label[i] if i < len(args.label) else Path(model).stem
-        rows.append(run_supermut(make_bed(), model, label, args.n, args.seed))
+        rows.append(
+            run_supermut(make_bed(), model, label, args.n, args.seed, sampling)
+        )
 
     print(f"\nknown holes: {len(KNOWN_HOLES)} -> {', '.join(sorted(KNOWN_HOLES))}\n")
     header = f"{'tool':24} {'mutants':>7} {'killed':>6} {'survived':>8} {'holes':>5}  {'time':>6}  holes found"

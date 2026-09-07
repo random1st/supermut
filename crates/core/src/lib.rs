@@ -182,13 +182,57 @@ impl Engine {
         }
         let last_prefix_tok = *prefix_tokens.last().ok_or_else(|| err("empty prefix"))?;
 
-        // Size the context for the actual batch: a single generation must
+        // Tokenize every continuation up front: the KV budget below needs
+        // real lengths, and a tail that can never fit is an error before
+        // any GPU work.
+        let mut cont_tokens_all: Vec<Vec<LlamaToken>> = Vec::with_capacity(continuations.len());
+        for cont in continuations {
+            let toks = if cont.is_empty() {
+                Vec::new()
+            } else {
+                self.model.str_to_token(cont, AddBos::Never).map_err(err)?
+            };
+            if prefix_len + toks.len() + params.max_tokens >= self.n_ctx as usize {
+                return Err(format!(
+                    "prefix + continuation ({} tokens) + max_tokens ({}) exceeds n_ctx ({})",
+                    prefix_len + toks.len(),
+                    params.max_tokens,
+                    self.n_ctx
+                ));
+            }
+            cont_tokens_all.push(toks);
+        }
+
+        // Form waves greedily against the KV budget. The unified cache holds
+        // n_ctx cells for the prefix PLUS every live sequence's tail, so the
+        // single-sequence check is necessary but not sufficient: 16
+        // sequences x 192 tokens overflowed n_ctx=2048 mid-wave with
+        // "failed to find a memory slot" (NoKvCacheSlot). Each wave fits by
+        // construction; the per-item check above guarantees any single
+        // continuation fits alone. Waves preserve input order.
+        let kv_room = (self.n_ctx as usize).saturating_sub(prefix_len);
+        let mut waves: Vec<Vec<usize>> = Vec::new();
+        let mut current: Vec<usize> = Vec::new();
+        let mut used = 0usize;
+        for (i, toks) in cont_tokens_all.iter().enumerate() {
+            let need = toks.len() + params.max_tokens;
+            if !current.is_empty() && (current.len() >= WAVE_SIZE || used + need > kv_room) {
+                waves.push(std::mem::take(&mut current));
+                used = 0;
+            }
+            current.push(i);
+            used += need;
+        }
+        if !current.is_empty() {
+            waves.push(current);
+        }
+        // Size the context for the largest wave: a single generation must
         // not pay for WAVE_SIZE sequence streams.
-        let wave_size = continuations.len().clamp(1, WAVE_SIZE);
+        let max_wave = waves.iter().map(Vec::len).max().unwrap_or(1);
         let ctx_params = LlamaContextParams::default()
             .with_n_ctx(NonZeroU32::new(self.n_ctx))
             .with_n_batch(self.n_ctx.max(512))
-            .with_n_seq_max(wave_size as u32 + 1)
+            .with_n_seq_max(max_wave as u32 + 1)
             // One shared KV buffer: sequences reference the same prefix
             // cells, so copy_kv_cache_seq marks cells instead of copying.
             .with_kv_unified(true);
@@ -196,25 +240,26 @@ impl Engine {
             .model
             .new_context(self.backend, ctx_params)
             .map_err(err)?;
-        let mut batch = LlamaBatch::new(ctx.n_batch() as usize, wave_size as i32 + 1);
+        let mut batch = LlamaBatch::new(ctx.n_batch() as usize, max_wave as i32 + 1);
 
         let after_prefix =
             Self::decode_tokens(&mut ctx, &mut batch, &prefix_tokens, SEQ_PREFIX, 0)?;
 
         let mut results = Vec::with_capacity(continuations.len());
-        for (wave_no, wave) in continuations.chunks(wave_size).enumerate() {
+        for wave in &waves {
             let mut slots = Vec::with_capacity(wave.len());
-            for (j, _cont) in wave.iter().enumerate() {
+            for (j, &global_i) in wave.iter().enumerate() {
                 let seq = j as i32 + 1;
                 ctx.clear_kv_cache_seq(Some(seq as u32), None, None)
                     .map_err(err)?;
                 ctx.copy_kv_cache_seq(SEQ_PREFIX, seq, None, None)
                     .map_err(err)?;
-                let global_i = wave_no * wave_size + j;
                 slots.push(Slot {
                     seq,
                     pos: after_prefix,
                     logits_idx: 0,
+                    // Seed offset is the global index, so results don't
+                    // change with how the batch happens to split into waves.
                     sampler: params.sampler(global_i as u32),
                     decoder: encoding_rs::UTF_8.new_decoder(),
                     out: String::new(),
@@ -226,8 +271,9 @@ impl Engine {
             // continuations re-decode the last prefix token in their own
             // sequence to obtain fresh logits for sampling.
             batch.clear();
-            for (slot, cont) in slots.iter_mut().zip(wave.iter()) {
-                if cont.is_empty() {
+            for (slot, &global_i) in slots.iter_mut().zip(wave.iter()) {
+                let cont_tokens = &cont_tokens_all[global_i];
+                if cont_tokens.is_empty() {
                     ctx.clear_kv_cache_seq(
                         Some(slot.seq as u32),
                         Some(after_prefix as u32 - 1),
@@ -238,15 +284,6 @@ impl Engine {
                         .add(last_prefix_tok, after_prefix - 1, &[slot.seq], true)
                         .map_err(err)?;
                 } else {
-                    let cont_tokens = self.model.str_to_token(cont, AddBos::Never).map_err(err)?;
-                    if prefix_len + cont_tokens.len() + params.max_tokens >= self.n_ctx as usize {
-                        return Err(format!(
-                            "prefix + continuation ({} tokens) + max_tokens ({}) exceeds n_ctx ({})",
-                            prefix_len + cont_tokens.len(),
-                            params.max_tokens,
-                            self.n_ctx
-                        ));
-                    }
                     for (i, tok) in cont_tokens.iter().enumerate() {
                         let is_last = i == cont_tokens.len() - 1;
                         batch

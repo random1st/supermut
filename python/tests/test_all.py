@@ -99,3 +99,27 @@ def test_stop_sequences(llm):
 def test_count_tokens(llm):
     n = llm.count_tokens("hello world")
     assert 1 <= n <= 8
+
+
+@needs_model
+def test_generate_batch_exceeds_single_wave_kv_budget():
+    """16 continuations x 48 tokens cannot share one 512-cell KV cache with
+    the prefix; the core must split them into waves instead of failing
+    with NoKvCacheSlot mid-decode (the v3 bench regression)."""
+    small = supermut.LLM(MODEL, n_ctx=512)
+    prefix = "def clamp(x, lo, hi):\n    if x < lo:\n        return lo\n"
+    outs = small.generate_batch(prefix, [""] * 16, max_tokens=48, temperature=0.9, seed=3)
+    assert len(outs) == 16
+    assert all(isinstance(o, str) for o in outs)
+    # Wave splitting must not change results: seed offset is the global
+    # index, so the same call with a wider budget yields identical output.
+    wide = supermut.LLM(MODEL, n_ctx=2048)
+    outs_wide = wide.generate_batch(prefix, [""] * 16, max_tokens=48, temperature=0.9, seed=3)
+    assert outs == outs_wide
+
+
+@needs_model
+def test_generate_batch_mixed_length_continuations_fit(llm):
+    conts = ["", " a", " a + b + c + d + e + f", ""] * 4
+    outs = llm.generate_batch("def f(a, b):\n    return", conts, max_tokens=8, temperature=0.0)
+    assert len(outs) == len(conts)

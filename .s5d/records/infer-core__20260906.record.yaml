@@ -1,4 +1,4 @@
-revision: 69
+revision: 70
 spec_ref: infer-core__20260906.s5d.yaml
 spec_sha256: sha256:e7e4c85c89bb70fa7ba06d7202863970f112737a8be56a1efb3d0224a7fccde4
 status: approved
@@ -1437,6 +1437,57 @@ gate_results:
   command:
   - /Users/random1st/src/supermut/.s5d/harness/typecheck.sh
   duration_ms: 412
+  waiver_expires_at: null
+  kind_class: acceptance
+- kind: schema
+  status: passed
+  spec_sha256: sha256:e7e4c85c89bb70fa7ba06d7202863970f112737a8be56a1efb3d0224a7fccde4
+  subject_kind: governed_components
+  subject_sha256: sha256:868f2e66182f6ce765efa4fe3e318188686b5b9c60360741750ca2daa3255fd0
+  attempt: 27
+  timestamp: 2026-09-07T06:05:58.358879+00:00
+  log: schema validation passed (built-in)
+  exit_code: null
+  evidence_path: evidence/infer-core/schema_27.log
+  command: null
+  duration_ms: 10
+  waiver_expires_at: null
+  kind_class: eligibility
+- kind: graph
+  status: passed
+  spec_sha256: sha256:e7e4c85c89bb70fa7ba06d7202863970f112737a8be56a1efb3d0224a7fccde4
+  subject_kind: governed_components
+  subject_sha256: sha256:868f2e66182f6ce765efa4fe3e318188686b5b9c60360741750ca2daa3255fd0
+  attempt: 27
+  timestamp: 2026-09-07T06:05:58.368892+00:00
+  log: graph check passed (built-in)
+  exit_code: null
+  evidence_path: evidence/infer-core/graph_27.log
+  command: null
+  duration_ms: 9
+  waiver_expires_at: null
+  kind_class: eligibility
+- kind: typecheck
+  status: passed
+  spec_sha256: sha256:e7e4c85c89bb70fa7ba06d7202863970f112737a8be56a1efb3d0224a7fccde4
+  subject_kind: governed_components
+  subject_sha256: sha256:868f2e66182f6ce765efa4fe3e318188686b5b9c60360741750ca2daa3255fd0
+  attempt: 27
+  timestamp: 2026-09-07T06:06:00.038697+00:00
+  log: |
+    exit: exit status: 0
+    stdout:
+
+    stderr:
+       Compiling pyo3-ffi v0.29.2
+       Compiling pyo3 v0.29.2
+        Checking supermut v0.1.0 (/Users/random1st/src/supermut/crates/py)
+        Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.63s
+  exit_code: 0
+  evidence_path: evidence/infer-core/typecheck_27.log
+  command:
+  - /Users/random1st/src/supermut/.s5d/harness/typecheck.sh
+  duration_ms: 1658
   waiver_expires_at: null
   kind_class: acceptance
 decision: null

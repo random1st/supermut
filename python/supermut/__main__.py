@@ -43,9 +43,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--filename", help="GGUF filename inside the HF repo")
     parser.add_argument("--cwd", help="directory to run tests from (default: file's dir)")
-    parser.add_argument("-n", "--n-per-target", type=int, default=8)
+    parser.add_argument("-n", "--n-per-target", type=int, default=16)
     parser.add_argument("--max-tokens", type=int, default=192)
-    parser.add_argument("--temperature", type=float, default=0.9)
+    parser.add_argument("--temperature", type=float, default=1.2)
+    parser.add_argument(
+        "--top-p", type=float, default=1.0, help="1.0 = off; 0.95 throttles diversity"
+    )
+    parser.add_argument("--min-p", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--n-ctx", type=int, default=4096)
@@ -72,6 +76,8 @@ def main(argv: list[str] | None = None) -> int:
             n_per_target=args.n_per_target,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
+            top_p=args.top_p,
+            min_p=args.min_p,
             seed=args.seed,
             timeout_s=args.timeout,
             use_cache=not args.no_cache,

@@ -217,9 +217,16 @@ def run(
     python: str = sys.executable,
     runner: Runner | None = None,
     runner_cmd: str | None = None,
-    n_per_target: int = 8,
+    # Sampling defaults are evidence-driven (v3 bench, 2026-09-07): n=16
+    # stabilizes hole detection that n=8 misses by sampling noise, and
+    # top_p=0.95 throttled diversity so hard that temperature had no effect
+    # — the model copied the original half the time. With top_p=1.0 and
+    # min_p=0 at T=1.2 Python copies dropped 4/8 -> 0/8 with 6 unique mutants.
+    n_per_target: int = 16,
     max_tokens: int = 192,
-    temperature: float = 0.9,
+    temperature: float = 1.2,
+    top_p: float = 1.0,
+    min_p: float = 0.0,
     seed: int = 42,
     timeout_s: float = 60.0,
     use_cache: bool = True,
@@ -329,6 +336,8 @@ def run(
                 n_per_target=n_per_target,
                 max_tokens=max_tokens,
                 temperature=temperature,
+                top_p=top_p,
+                min_p=min_p,
                 seed=seed + t_idx * 1000,
                 targets=[target],
                 language=language,

@@ -162,6 +162,8 @@ def generate_mutants(
     n_per_target: int = 8,
     max_tokens: int = 192,
     temperature: float = 0.9,
+    top_p: float = 0.95,
+    min_p: float = 0.05,
     seed: int = 42,
     targets: list[FunctionTarget] | None = None,
     language=None,
@@ -189,6 +191,8 @@ def generate_mutants(
             [""] * n_per_target,
             max_tokens=max_tokens,
             temperature=temperature,
+            top_p=top_p,
+            min_p=min_p,
             seed=seed + t_idx * 1000,
             stop=_STOP_SEQS[lang_name],
         )
