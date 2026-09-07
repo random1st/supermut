@@ -164,7 +164,9 @@ artifacts:
     - python/supermut/runners.py
     - python/supermut/schemata.py
     - python/supermut/export.py
+    - python/supermut/synthetic_ts.py
     - python/tests/test_export.py
+    - python/tests/test_synthetic_ts.py
     - python/tests/test_runners.py
     - python/tests/test_schemata.py
     - python/tests/test_languages.py
